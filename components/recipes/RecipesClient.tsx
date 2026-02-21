@@ -639,7 +639,7 @@ export default function RecipesClient() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.98 }}
             transition={{ duration: 0.2 }}
-            className="fixed right-4 top-4 z-[70]"
+            className="fixed right-4 top-4 z-70"
           >
             <div
               className={`max-w-xs rounded-2xl border px-3 py-2 text-xs shadow-lg ${
@@ -833,7 +833,7 @@ export default function RecipesClient() {
 
                   <div className="mt-3 grid gap-2">
                     <div className="text-xs text-muted">Activity</div>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-3">
+                    <div className="grid grid-cols-2 gap-1 xs:gap-2 sm:grid-cols-3 lg:grid-cols-3">
                       {activityOptions.map((option) => (
                         <button
                           key={option.value}
@@ -855,7 +855,7 @@ export default function RecipesClient() {
 
                   <div className="mt-3 grid gap-2">
                     <div className="text-xs text-muted">Goal</div>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-2">
+                    <div className="grid grid-cols-2 gap-1 xs:gap-2 sm:grid-cols-2">
                       {goalOptions.map((option) => (
                         <button
                           key={option.value}
@@ -1199,7 +1199,7 @@ export default function RecipesClient() {
                 </div>
                 <div className="text-xs text-muted">{favorites.length} saved</div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-2 xs:gap-3 sm:grid-cols-2">
                 {recipes
                   .filter((entry) => favorites.includes(entry.id))
                   .map((entry) => (
@@ -1228,7 +1228,7 @@ export default function RecipesClient() {
                 No recipes found. Try adjusting your filters.
               </div>
             ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-2 xs:gap-3 sm:grid-cols-2">
                 {activeRecipes.map((entry) => (
                   <RecipeCard
                     key={entry.id}
@@ -1349,7 +1349,7 @@ function RecipeModal({
 
   return (
     <motion.div
-      className="mx-auto fixed inset-0 max-w-md z-50 bg-black/35 backdrop-blur-[50px]"
+      className="mx-auto fixed inset-0 z-50 bg-black/35 backdrop-blur-[50px]"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -1357,7 +1357,7 @@ function RecipeModal({
       onClick={onClose}
     >
       <motion.div
-        className="mx-auto h-dvh w-full max-w-xl p-1.5 sm:p-2 md:h-[92vh] md:py-5"
+        className="mx-auto h-dvh w-full max-w-4xl p-1 xs:p-1.5 sm:p-2 md:h-[92vh] md:py-5"
         initial={{ y: 34, opacity: 0.96 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 26, opacity: 0 }}
@@ -1365,49 +1365,49 @@ function RecipeModal({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-border bg-(--surface) shadow-xl will-change-transform">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-3 sm:px-4">
-            <div className="text-xs text-muted">{recipe.meal}</div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-2 xs:px-3 py-2 xs:py-3 sm:px-4">
+            <div className="text-[11px] xs:text-xs text-muted">{recipe.meal}</div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onToggleFavorite(recipe.id)}
-                className="rounded-full border border-border px-3 py-1.5 text-xs text-muted"
+                className="rounded-full border border-border px-2 xs:px-3 py-1 xs:py-1.5 text-[11px] xs:text-xs text-muted"
               >
                 {isFavorite ? "Saved" : "Save"}
               </button>
               <button
                 onClick={onClose}
-                className="rounded-full border border-border px-3 py-1.5 text-xs text-muted"
+                className="rounded-full border border-border px-2 xs:px-3 py-1 xs:py-1.5 text-[11px] xs:text-xs text-muted"
               >
                 Close
               </button>
             </div>
           </div>
 
-          <div className="overflow-y-auto px-3 pb-8 pt-3 sm:px-4 [scrollbar-width:thin] [scrollbar-color:rgb(var(--color-accent))_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-accent/40">
-            <div className="grid gap-4">
+          <div className="overflow-y-auto px-2 xs:px-3 pb-8 pt-2 xs:pt-3 sm:px-4 [scrollbar-width:thin] [scrollbar-color:rgb(var(--color-accent))_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-accent/40">
+            <div className="grid gap-3 xs:gap-4">
               <div>
-                <h3 className="text-lg font-semibold text-foreground">{recipe.title}</h3>
-                <p className="mt-1 text-xs text-muted">{recipe.description}</p>
+                <h3 className="text-base xs:text-lg font-semibold text-foreground">{recipe.title}</h3>
+                <p className="mt-0.5 xs:mt-1 text-[11px] xs:text-xs text-muted">{recipe.description}</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <div className="rounded-2xl border border-border bg-card px-3 py-2">
-                  <div className="text-[10px] text-muted">Time</div>
+              <div className="grid grid-cols-2 gap-1 xs:gap-2 sm:grid-cols-3">
+                <div className="rounded-2xl border border-border bg-card px-2 xs:px-3 py-2">
+                  <div className="text-[9px] xs:text-[10px] text-muted">Time</div>
                   <div className="text-xs font-semibold text-foreground">{recipe.timeMinutes} min</div>
                 </div>
-                <div className="rounded-2xl border border-border bg-card px-3 py-2">
-                  <div className="text-[10px] text-muted">Protein</div>
+                <div className="rounded-2xl border border-border bg-card px-2 xs:px-3 py-2">
+                  <div className="text-[9px] xs:text-[10px] text-muted">Protein</div>
                   <div className="text-xs font-semibold text-foreground">{recipe.protein}</div>
                 </div>
-                <div className="rounded-2xl border border-border bg-card px-3 py-2">
-                  <div className="text-[10px] text-muted">Serving</div>
+                <div className="rounded-2xl border border-border bg-card px-2 xs:px-3 py-2">
+                  <div className="text-[9px] xs:text-[10px] text-muted">Serving</div>
                   <div className="text-xs font-semibold text-foreground">{recipe.serving}</div>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-border bg-card p-3">
+              <div className="rounded-2xl border border-border bg-card p-2 xs:p-3">
                 <div className="text-sm font-semibold text-foreground">Nutrition Facts</div>
-                <div className="mt-2 grid gap-1 text-xs text-muted">
+                <div className="mt-2 grid gap-1 text-[11px] xs:text-xs text-muted">
                   <div className="flex justify-between border-b border-border pb-1">
                     <span className="font-semibold text-foreground">Calories</span>
                     <span className="font-semibold text-foreground">{n.calories} kcal</span>
