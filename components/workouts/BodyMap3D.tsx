@@ -241,7 +241,7 @@ export default function BodyMap3D({
   };
 
   return (
-    <div className="h-[420px] w-full">
+    <div className="h-105 w-full">
       <Canvas camera={{ position: cameraPosition, fov: 30 }} dpr={[1, 1.5]}>
         <color attach="background" args={["#0d111c"]} />
         <ambientLight intensity={0.7} />

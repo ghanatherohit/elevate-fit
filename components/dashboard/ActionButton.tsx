@@ -15,5 +15,3 @@ export default function ActionButton({ label, note }: ActionButtonProps) {
     </button>
   );
 }
-
-
