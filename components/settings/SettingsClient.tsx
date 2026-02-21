@@ -38,9 +38,13 @@ export default function SettingsClient() {
     sms: false,
   });
   const [status, setStatus] = useState<string | null>(null);
-  const [pushReady] = useState(
-    () => typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window,
-  );
+  const [pushReady, setPushReady] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window) {
+      setPushReady(true);
+    }
+  }, []);
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
   const normalizedPublicKey = publicKey.trim();
   const isPlaceholderKey =
@@ -160,7 +164,7 @@ export default function SettingsClient() {
       </motion.div>
 
       <motion.div variants={item}>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2">
           <GlassCard className="grid gap-3">
             <div className="text-xs text-muted">Personal</div>
             <Link
@@ -175,12 +179,48 @@ export default function SettingsClient() {
             >
               Health plan
             </Link>
+            <Link
+              href="/routine"
+              className="rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition hover:-translate-y-0.5 hover:border-accent/40"
+            >
+              Routine
+            </Link>
+            <Link
+              href="/progress"
+              className="rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition hover:-translate-y-0.5 hover:border-accent/40"
+            >
+              Progress
+            </Link>
           </GlassCard>
 
-          <GlassCard className="grid gap-3">
-            <div className="text-xs text-muted">Appearance</div>
-            <ThemeToggle />
-          </GlassCard>
+          <div className="grid gap-4">
+            <GlassCard className="grid gap-3">
+              <div className="text-xs text-muted">Appearance</div>
+              <ThemeToggle />
+            </GlassCard>
+
+            <GlassCard className="grid gap-3">
+              <div className="text-xs text-muted">Nutrition + Training</div>
+              <Link
+                href="/recipes"
+                className="rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition hover:-translate-y-0.5 hover:border-accent/40"
+              >
+                Recipes
+              </Link>
+              <Link
+                href="/gym"
+                className="rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition hover:-translate-y-0.5 hover:border-accent/40"
+              >
+                Gym
+              </Link>
+              <Link
+                href="/guidance"
+                className="rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition hover:-translate-y-0.5 hover:border-accent/40"
+              >
+                Guidance
+              </Link>
+            </GlassCard>
+          </div>
         </div>
       </motion.div>
 

@@ -38,6 +38,13 @@
   --badge-sms: #1f9e6c;
 }
 
+.light .app-bg {
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(124, 108, 255, 0.12), transparent 55%),
+    radial-gradient(800px 500px at 80% -20%, rgba(31, 111, 255, 0.12), transparent 55%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg) 30%, var(--bg) 100%);
+}
+
 @theme inline {
   --color-background: var(--bg);
   --color-foreground: var(--text);
@@ -58,13 +65,22 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sora), ui-sans-serif, system-ui, sans-serif;
+  transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* {
+  transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .app-bg {
   background:
     radial-gradient(1200px 600px at 20% -10%, rgba(124, 108, 255, 0.18), transparent 55%),
     radial-gradient(800px 500px at 80% -20%, rgba(98, 210, 255, 0.18), transparent 55%),
-    linear-gradient(180deg, #0b0d13 0%, #0a0d16 30%, #0a0f1a 100%);
+    linear-gradient(180deg, var(--bg) 0%, var(--bg) 30%, var(--bg) 100%);
 }
 
 .glass-card {
@@ -72,6 +88,14 @@ body {
   border: 1px solid var(--border);
   box-shadow: 0 18px 40px rgba(8, 12, 20, 0.55), 0 0 0 1px rgba(84, 120, 255, 0.05);
   backdrop-filter: blur(18px);
+  transition: background 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.light .glass-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(244, 246, 251, 0.98));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(31, 111, 255, 0.08);
 }
 
 .soft-glow {

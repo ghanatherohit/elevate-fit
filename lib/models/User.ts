@@ -33,7 +33,7 @@ const UserSchema = new Schema<UserDocument>(
   {
     uid: { type: String, required: true, unique: true },
     username: { type: String, unique: true, sparse: true },
-    email: { type: String },
+    email: { type: String, unique: true, sparse: true },
     name: { type: String },
     photoURL: { type: String },
     dietProfile: {

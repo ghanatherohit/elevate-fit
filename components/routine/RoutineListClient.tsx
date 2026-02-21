@@ -113,7 +113,37 @@ const normalizeTasksByDay = (tasksByDay?: Partial<TasksByDay> | null): TasksByDa
   sunday: tasksByDay?.sunday ?? [],
 });
 
-const getDayName = (date: Date): DayName => dayNames[date.getDay()];
+// Get day of week from year, month (0-11), date using Zeller's congruence
+const getDayOfWeekIST = (year: number, month: number, day: number): DayName => {
+  const adjustedMonth = month < 2 ? month + 12 : month;
+  const adjustedYear = month < 2 ? year - 1 : year;
+  
+  const dayOfWeek = (day + Math.floor((13 * (adjustedMonth + 1)) / 5) + adjustedYear + Math.floor(adjustedYear / 4) - Math.floor(adjustedYear / 100) + Math.floor(adjustedYear / 400)) % 7;
+  
+  // dayOfWeek: 0=Saturday, 1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday
+  const dayNames_sorted = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday", "friday"] as DayName[];
+  return dayNames_sorted[dayOfWeek];
+};
+
+// Get day name in IST timezone
+const getDayName = (date: Date): DayName => {
+  const utcDate = date.getUTCDate();
+  const utcMonth = date.getUTCMonth();
+  const utcYear = date.getUTCFullYear();
+  const utcHours = date.getUTCHours();
+  
+  // IST is UTC+5:30
+  let istDate = utcDate;
+  let istMonth = utcMonth;
+  let istYear = utcYear;
+  let istHours = (utcHours + 5) % 24;
+  
+  if (utcHours + 5 >= 24) {
+    istDate += 1;
+  }
+  
+  return getDayOfWeekIST(istYear, istMonth, istDate);
+};
 
 const addTaskToDay = (tasksByDay: TasksByDay, dayName: DayName, task: RoutineItemType) => {
   const nextDayItems = [...tasksByDay[dayName], task].sort(
@@ -176,10 +206,16 @@ const parseDateKey = (value: string) => {
 };
 
 const getMondayStart = (date: Date) => {
-  const mondayOffset = (date.getDay() + 6) % 7;
+  // Get day of week in IST timezone
+  const dayName = getDayName(date);
+  const dayIndex = dayNames.indexOf(dayName);
+  
+  // Monday is at index 1, calculate days to go back
+  const daysToMonday = (dayIndex === 0 ? 6 : dayIndex - 1); // Sunday->6, Monday->0, Tuesday->1, etc.
+  
   const monday = new Date(date);
   monday.setHours(0, 0, 0, 0);
-  monday.setDate(date.getDate() - mondayOffset);
+  monday.setDate(date.getDate() - daysToMonday);
   return monday;
 };
 

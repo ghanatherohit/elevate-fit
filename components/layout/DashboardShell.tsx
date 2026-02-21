@@ -26,7 +26,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
 
   return (
     <div className="app-bg min-h-screen">
-      <div className="mx-auto flex min-h-screen max-w-md flex-col gap-5 px-5 pb-28 pt-6">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-5 px-4 pb-28 pt-5 sm:px-6 sm:pt-6 lg:px-10">
         {showBackButton ? (
           <div className="sticky top-4 z-30">
             <button

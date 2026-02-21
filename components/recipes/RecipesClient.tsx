@@ -668,7 +668,7 @@ export default function RecipesClient() {
         </motion.div>
 
         <motion.div variants={item}>
-          <GlassCard className="grid gap-4">
+          <GlassCard className="grid gap-4 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-sm font-semibold text-foreground">Diet profile calculator</div>
@@ -905,7 +905,7 @@ export default function RecipesClient() {
                     </div>
                   </div>
 
-                  <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div className="mt-2 grid grid-cols-1 gap-2 xs:grid-cols-2">
                     <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
                       <div className="text-[10px] text-muted">Target calories</div>
                       <div className="text-sm font-semibold text-foreground">
@@ -970,7 +970,7 @@ export default function RecipesClient() {
                         </div>
                       </div>
 
-                      <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="mt-2 grid grid-cols-1 gap-2 xs:grid-cols-2">
                         <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
                           <div className="text-[10px] text-muted">BMR</div>
                           <div className="text-sm font-semibold text-foreground">{Math.round(targets.bmr)}</div>
@@ -1039,7 +1039,7 @@ export default function RecipesClient() {
                   <button
                     key={tag}
                     onClick={() => toggleTag(tag)}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] transition ${
+                    className={`rounded-full border px-2.5 py-1 text-[10px] transition xs:px-3 xs:py-1.5 xs:text-[11px] ${
                       selectedTags.includes(tag)
                         ? "border-accent bg-accent/15 text-accent"
                         : "border-border bg-card-strong text-muted"
@@ -1071,7 +1071,7 @@ export default function RecipesClient() {
               <button
                 key={tab}
                 onClick={() => setSelectedTab(tab)}
-                className={`whitespace-nowrap rounded-full border px-4 py-2 text-xs font-medium transition ${
+                className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-[11px] font-medium transition xs:px-4 xs:py-2 xs:text-xs ${
                   selectedTab === tab
                     ? "border-accent bg-accent/15 text-accent"
                     : "border-border bg-card text-muted"
@@ -1290,7 +1290,7 @@ function RecipeCard({
             </span>
           ))}
         </div>
-        <div className="grid grid-cols-3 gap-2 text-[10px]">
+        <div className="grid grid-cols-2 gap-2 text-[10px] xs:grid-cols-3">
           <div>
             <div className="text-muted">Calories</div>
             <div className="font-semibold text-foreground">{recipe.nutrition.calories}</div>
