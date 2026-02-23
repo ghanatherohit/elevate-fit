@@ -42,10 +42,8 @@ A user-friendly Book Store Application where users can browse and purchase books
 ## Tech Stack
 
 - **Frontend:** [TypeScript](https://www.typescriptlang.org/) (98.4%), [CSS](https://developer.mozilla.org/en-US/docs/Web/CSS) (1.2%), [JavaScript](https://developer.mozilla.org/en-US/docs/Web/JavaScript) (0.4%)
-- **Frameworks/Libraries:** (Update with actual frameworks used, e.g., React, Next.js, etc.)
-- **Backend:** (Add info if applicable)
-- **Database:** (Add info if applicable)
-- **APIs:** (List any APIs used)
+- **Frameworks/Libraries:** (React, Next.js)
+- **Database:** (MongoDB)
 
 ---
 
