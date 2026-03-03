@@ -159,6 +159,7 @@ elevate-fit/
 | `/api/auth/resolve` | `POST` | Resolve a username to an email for login |
 | `/api/profile` | `PATCH` | Update user profile (username, name, avatar) |
 | `/api/diet` | `GET` / `PUT` | Get or update diet profile |
+| `/api/diet/daily` | `GET` | Generate a personalized daily diet plan |
 | `/api/routine/tasks` | `GET` / `PUT` | Get or update weekly routine tasks |
 | `/api/routine/checklist` | `GET` / `PUT` | Track daily task completion |
 | `/api/routine/weekly-program` | `GET` / `PUT` | Manage weekly program preferences |
@@ -189,7 +190,7 @@ cd elevate-fit
 ### 2. Install Dependencies
 
 ```bash
-npm install
+pm install
 ```
 
 ### 3. Configure Environment Variables
@@ -199,7 +200,7 @@ Create a `.env.local` file in the project root (see [Environment Variables](#env
 ### 4. Start the Development Server
 
 ```bash
-npm run dev
+pm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
