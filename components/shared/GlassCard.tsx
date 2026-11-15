@@ -5,11 +5,6 @@ type GlassCardProps = {
 
 export default function GlassCard({ children, className = "" }: GlassCardProps) {
   return (
-    <div
-      className={`glass-card rounded-3xl p-4 text-foreground ${className}`}
-    >
-      {children}
-    </div>
+    <div className={`glass-card p-4 text-foreground ${className}`}>{children}</div>
   );
 }
-

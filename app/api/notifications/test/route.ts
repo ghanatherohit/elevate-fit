@@ -39,14 +39,27 @@ export async function POST(request: Request) {
   }
 
   try {
-    if (wantsEmail && !user?.email) {
+    // Respect saved channel prefs (email defaults on when unset).
+    const emailEnabled = preference?.email !== false;
+    const pushEnabled = preference?.push === true;
+    const deliverEmail = wantsEmail && emailEnabled;
+    const deliverPush = wantsPush && pushEnabled;
+
+    if (!deliverEmail && !deliverPush) {
+      return NextResponse.json(
+        { error: "No enabled notification channels for this test" },
+        { status: 400 },
+      );
+    }
+
+    if (deliverEmail && !user?.email) {
       return NextResponse.json(
         { error: "No email found for this account" },
         { status: 400 },
       );
     }
 
-    if (wantsPush && !subscriptions.length) {
+    if (deliverPush && !subscriptions.length) {
       return NextResponse.json(
         { error: "No push subscription found" },
         { status: 400 },
@@ -55,7 +68,7 @@ export async function POST(request: Request) {
 
     const tasks: Promise<unknown>[] = [];
 
-    if (wantsEmail && user?.email) {
+    if (deliverEmail && user?.email) {
       tasks.push(
         sendEmail({
           to: user.email,
@@ -65,7 +78,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (wantsPush) {
+    if (deliverPush) {
       tasks.push(
         ...subscriptions.map((sub) =>
           sendPush(sub, {
@@ -86,8 +99,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Delivery failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[notifications/test]", error);
+    return NextResponse.json(
+      { error: "Delivery failed. Try again shortly." },
+      { status: 500 },
+    );
   }
 }

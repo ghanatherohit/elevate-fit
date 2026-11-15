@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { NotificationPreference } from "@/lib/models/NotificationPreference";
 import { requireSession } from "@/lib/auth/session";
+import {
+  getFirstZodError,
+  notificationPreferenceSchema,
+} from "@/lib/validation/schemas";
 
 export async function GET() {
   const session = await requireSession();
@@ -24,11 +28,17 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { email, push, sms } = (await request.json()) as {
-    email?: boolean;
-    push?: boolean;
-    sms?: boolean;
-  };
+  const payload = notificationPreferenceSchema.safeParse(await request.json());
+  if (!payload.success) {
+    return NextResponse.json(
+      { error: getFirstZodError(payload.error) },
+      { status: 400 },
+    );
+  }
+
+  const { email, push } = payload.data;
+  // SMS channel is not delivered yet — always store false.
+  const sms = false;
 
   await connectToDatabase();
 
@@ -36,9 +46,9 @@ export async function PUT(request: Request) {
     { uid: session.uid },
     {
       uid: session.uid,
-      email: email ?? true,
-      push: push ?? false,
-      sms: sms ?? false,
+      email,
+      push,
+      sms,
     },
     { new: true, upsert: true },
   );

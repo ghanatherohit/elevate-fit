@@ -1,19 +1,30 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { verifySession } from "@/lib/auth/jwt";
+import { requireSession } from "@/lib/auth/session";
+import { connectToDatabase } from "@/lib/db/mongoose";
+import { User } from "@/lib/models/User";
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("ef_session")?.value;
-
-  if (!token) {
+  const session = await requireSession();
+  if (!session) {
     return NextResponse.json({ user: null });
   }
 
-  try {
-    const payload = verifySession(token);
-    return NextResponse.json({ user: payload });
-  } catch {
-    return NextResponse.json({ user: null }, { status: 401 });
+  await connectToDatabase();
+  const user = await User.findOne({ uid: session.uid })
+    .select("uid username email name photoURL")
+    .lean();
+
+  if (!user) {
+    return NextResponse.json({ user: null });
   }
+
+  return NextResponse.json({
+    user: {
+      uid: user.uid,
+      username: user.username ?? null,
+      email: user.email ?? null,
+      name: user.name ?? null,
+      photoURL: user.photoURL ?? null,
+    },
+  });
 }

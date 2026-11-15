@@ -17,7 +17,23 @@ import {
   YAxis,
 } from "recharts";
 import GlassCard from "@/components/shared/GlassCard";
+import {
+  ChartBlock,
+  DataList,
+  DataRow,
+  StatCell,
+  StatStrip,
+} from "@/components/shared/DataSurfaces";
 import SectionHeader from "@/components/shared/SectionHeader";
+import ProgressLoading from "@/components/progress/ProgressLoading";
+import {
+  dateFromDateKey,
+  getDayNameFromDateKey,
+  getIstMondayDateKey,
+  shiftDateKey,
+  toIstDateKey,
+} from "@/lib/datetime/ist";
+import { useThemeCssVars } from "@/lib/theme/css-vars";
 
 type RangeKey = "day" | "week" | "month" | "year";
 
@@ -85,19 +101,20 @@ const rangeLabels: Record<RangeKey, string> = {
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 
-const toKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-const fromKey = (key: string) => new Date(`${key}T00:00:00`);
+const toKey = (date: Date) => toIstDateKey(date);
+const fromKey = (key: string) => dateFromDateKey(key) ?? new Date(`${key}T00:00:00`);
 
 const checklistPercent = (tasksDone: number, tasksTotal: number) =>
   tasksTotal > 0 ? Math.round(clamp((tasksDone / tasksTotal) * 100, 0, 100)) : 0;
 
+const completedCount = (completed: Record<string, boolean> | undefined) =>
+  Object.values(completed || {}).filter(Boolean).length;
 
 const startOfWeek = (date: Date) => {
+  const monday = dateFromDateKey(getIstMondayDateKey(date));
+  if (monday) {
+    return monday;
+  }
   const next = new Date(date);
   const day = next.getDay();
   const diff = day === 0 ? -6 : 1 - day;
@@ -111,14 +128,18 @@ const formatShort = (date: Date) =>
 
 const getTasksForDay = (tasksByDay: TasksByDay | null, date: Date): RoutineTask[] => {
   if (!tasksByDay) return [];
-
-  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  const dayName = dayNames[date.getDay()] as keyof TasksByDay;
-
+  const dayName = getDayNameFromDateKey(toKey(date)) as keyof TasksByDay;
   return tasksByDay[dayName] || [];
 };
 
 export default function ProgressClient() {
+  const themeVars = useThemeCssVars();
+  const chartTooltipStyle = {
+    background: themeVars.chartTooltip,
+    border: `1px solid ${themeVars.border}`,
+    borderRadius: 12,
+    color: "var(--text)",
+  };
   const [range, setRange] = useState<RangeKey>("week");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [progressData, setProgressData] = useState<ProgressByDate>({});
@@ -126,22 +147,17 @@ export default function ProgressClient() {
   const [completionByDate, setCompletionByDate] = useState<Record<string, Record<string, boolean>>>({});
   const [loading, setLoading] = useState(true);
 
-  const todayDate = useMemo(() => {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    return date;
-  }, []);
-  const todayKey = useMemo(() => toKey(todayDate), [todayDate]);
+  const todayKey = useMemo(() => toIstDateKey(), []);
+  const todayDate = useMemo(
+    () => dateFromDateKey(todayKey) ?? new Date(),
+    [todayKey],
+  );
 
   useEffect(() => {
     const fetchProgressData = async () => {
       try {
-        const now = new Date();
-        const yearStart = new Date(now.getFullYear(), 0, 1);
-        const yearEnd = new Date(now.getFullYear(), 11, 31);
-
-        const startDate = toKey(yearStart);
-        const endDate = toKey(yearEnd);
+        const endDate = todayKey;
+        const startDate = shiftDateKey(todayKey, -370);
 
         const [progressResponse, tasksResponse, checklistResponse] = await Promise.all([
           fetch(`/api/progress?startDate=${startDate}&endDate=${endDate}`, { cache: "no-store" }),
@@ -156,15 +172,11 @@ export default function ProgressClient() {
 
         if (tasksResponse.ok) {
           const tasksData = await tasksResponse.json();
-          console.log('Tasks API response:', tasksData);
-          console.log('TasksByDay:', tasksData.tasksByDay);
           setTasksByDay(tasksData.tasksByDay || null);
         }
 
         if (checklistResponse.ok) {
           const checklistData = await checklistResponse.json();
-          console.log('Checklist API response:', checklistData);
-          console.log('CompletionByDate:', checklistData.completionByDate);
           setCompletionByDate(checklistData.completionByDate || {});
         }
       } catch (error) {
@@ -175,15 +187,18 @@ export default function ProgressClient() {
     };
 
     fetchProgressData();
-  }, []);
+  }, [todayKey]);
 
   const updateProgress = async (key: string, data: Partial<ProgressEntry>) => {
     try {
-      await fetch("/api/progress", {
+      const response = await fetch("/api/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date: key, ...data }),
       });
+      if (!response.ok) {
+        throw new Error("Progress update failed");
+      }
       setProgressData((prev) => ({ ...prev, [key]: { ...prev[key], ...data } }));
     } catch (error) {
       console.error("Failed to update progress:", error);
@@ -205,7 +220,7 @@ export default function ProgressClient() {
       const dayCompleted = completionByDate[key] || {};
       
       tasksTotal += dayTasks.length;
-      tasksDone += Object.keys(dayCompleted).length;
+      tasksDone += completedCount(dayCompleted);
       
       current.setDate(current.getDate() + 1);
     }
@@ -224,7 +239,7 @@ export default function ProgressClient() {
     const yearEnd = new Date(now.getFullYear(), 11, 31);
 
     const todayCompletedItems = completionByDate[todayKey] || {};
-    const todayTasksDone = Object.keys(todayCompletedItems).length;
+    const todayTasksDone = completedCount(todayCompletedItems);
     const todayTasks = getTasksForDay(tasksByDay, todayDate);
 
     return {
@@ -257,7 +272,7 @@ export default function ProgressClient() {
         const key = toKey(date);
         const dayTasks = getTasksForDay(tasksByDay, date);
         const completed = completionByDate[key] || {};
-        const tasksDone = Object.keys(completed).length;
+        const tasksDone = completedCount(completed);
         return {
           key,
           label: formatShort(date),
@@ -321,7 +336,7 @@ export default function ProgressClient() {
       });
     }
     return list;
-  }, [tasksByDay, completionByDate, range, todayDate, todayKey, collectRangeTotals]);
+  }, [tasksByDay, completionByDate, range, todayDate, collectRangeTotals]);
 
   useEffect(() => {
     if (!points.length) {
@@ -343,7 +358,7 @@ export default function ProgressClient() {
       const date = fromKey(activeKey);
       const dayTasks = getTasksForDay(tasksByDay, date);
       const completed = completionByDate[activeKey] || {};
-      const tasksDone = Object.keys(completed).length;
+      const tasksDone = completedCount(completed);
       return {
         tasksDone,
         tasksTotal: dayTasks.length,
@@ -418,7 +433,9 @@ export default function ProgressClient() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [goPrev, goNext]);
 
-  if (loading) return <div className="text-sm text-muted">Loading...</div>;
+  if (loading) {
+    return <ProgressLoading />;
+  }
 
   return (
     <motion.div
@@ -444,10 +461,10 @@ export default function ProgressClient() {
               {(Object.keys(rangeLabels) as RangeKey[]).map((key) => (
                 <button
                   key={key}
-                  className={`rounded-full border px-2.5 py-1 text-[11px] sm:px-3 sm:text-xs ${
+                  className={`soft-chip text-[11px] transition sm:text-xs ${
                     range === key
-                      ? "border-accent bg-card-strong text-foreground"
-                      : "border-border bg-card text-muted"
+                      ? "bg-accent/15 text-foreground"
+                      : "text-muted hover:text-foreground"
                   }`}
                   onClick={() => setRange(key)}
                 >
@@ -457,42 +474,42 @@ export default function ProgressClient() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatStrip>
             {([
               ["Day", periodPercentages.day],
               ["Week", periodPercentages.week],
               ["Month", periodPercentages.month],
               ["Year", periodPercentages.year],
             ] as const).map(([label, stat]) => (
-              <div
+              <StatCell
                 key={label}
-                className="rounded-xl border border-border bg-card px-2.5 py-2 sm:px-3"
-              >
-                <div className="text-[10px] text-muted">{label}</div>
-                <div className="text-sm font-semibold text-foreground">{stat.percent}%</div>
-                <div className="text-[10px] text-muted">
-                  {stat.tasksDone}/{stat.tasksTotal}
-                </div>
-              </div>
+                label={label}
+                value={`${stat.percent}%`}
+                hint={`${stat.tasksDone}/${stat.tasksTotal}`}
+              />
             ))}
-          </div>
+          </StatStrip>
 
-          <div className="grid gap-3 lg:grid-cols-[1.6fr_0.9fr]">
-            <div className="grid gap-3">
-              <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
-                <div className="text-xs text-muted">
-                  {range === "day" && "Current day"}
-                  {range === "week" && "Current week"}
-                  {range === "month" && "Current month"}
-                  {range === "year" && "Current year"}
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-2">
+          <div className="grid gap-4 lg:grid-cols-[1.6fr_0.9fr] lg:gap-6">
+            <div className="chart-stack">
+              <ChartBlock
+                title={
+                  range === "day"
+                    ? "Current day"
+                    : range === "week"
+                      ? "Current week"
+                      : range === "month"
+                        ? "Current month"
+                        : "Current year"
+                }
+              >
+                <div className="flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={goPrev}
-                    className={`rounded-2xl border border-border bg-card px-3 py-2 text-xs text-muted transition ${
+                    className={`soft-chip px-3 py-2 text-xs text-muted transition ${
                       canGoPrev
-                        ? "hover:border-accent/30 hover:text-foreground"
+                        ? "hover:text-foreground"
                         : "cursor-not-allowed opacity-50"
                     }`}
                     aria-label="Previous"
@@ -525,9 +542,9 @@ export default function ProgressClient() {
                   <button
                     type="button"
                     onClick={goNext}
-                    className={`rounded-2xl border border-border bg-card px-3 py-2 text-xs text-muted transition ${
+                    className={`soft-chip px-3 py-2 text-xs text-muted transition ${
                       canGoNext
-                        ? "hover:border-accent/30 hover:text-foreground"
+                        ? "hover:text-foreground"
                         : "cursor-not-allowed opacity-50"
                     }`}
                     aria-label="Next"
@@ -536,11 +553,10 @@ export default function ProgressClient() {
                     →
                   </button>
                 </div>
-              </div>
+              </ChartBlock>
 
-              <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
-                <div className="text-xs text-muted">Completion trend</div>
-                <div className="mt-3 h-36 w-full">
+              <ChartBlock title="Completion trend">
+                <div className="h-36 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                       <defs>
@@ -549,17 +565,12 @@ export default function ProgressClient() {
                           <stop offset="100%" stopColor="var(--color-accent)" stopOpacity={0.05} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                      <CartesianGrid stroke={themeVars.chartGrid} vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                       <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                       <Tooltip
-                        cursor={{ stroke: "rgba(255,255,255,0.12)", strokeDasharray: "3 3" }}
-                        contentStyle={{
-                          background: "rgba(12,12,12,0.9)",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: 12,
-                          fontSize: 12,
-                        }}
+                        cursor={{ stroke: themeVars.chartMuted, strokeDasharray: "3 3" }}
+                        contentStyle={{ ...chartTooltipStyle, fontSize: 12 }}
                         formatter={(value: number | undefined) => [value !== undefined ? `${value}%` : "-", "Completion"]}
                       />
                       <Area
@@ -572,24 +583,18 @@ export default function ProgressClient() {
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
-              </div>
+              </ChartBlock>
 
-              <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
-                <div className="text-xs text-muted">Tasks completed</div>
-                <div className="mt-3 h-28 w-full">
+              <ChartBlock title="Tasks completed">
+                <div className="h-28 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                      <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                      <CartesianGrid stroke={themeVars.chartGrid} vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                       <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
                       <Tooltip
-                        cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                        contentStyle={{
-                          background: "rgba(12,12,12,0.9)",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: 12,
-                          fontSize: 12,
-                        }}
+                        cursor={{ fill: themeVars.chartMuted }}
+                        contentStyle={{ ...chartTooltipStyle, fontSize: 12 }}
                         formatter={(value: number | undefined, name: string | undefined, entry: { payload?: { total?: number } }) => {
                           if (value === undefined) return ["-", name || ""];
                           if (name === "done") {
@@ -602,16 +607,15 @@ export default function ProgressClient() {
                         }}
                       />
                       <Bar dataKey="done" stackId="tasks" fill="var(--color-accent)" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="remaining" stackId="tasks" fill="rgba(255,255,255,0.08)" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="remaining" stackId="tasks" fill={themeVars.chartMuted} radius={[6, 6, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-              </div>
+              </ChartBlock>
             </div>
 
-            <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
-              <div className="text-xs text-muted">Overall split</div>
-              <div className="mt-3 flex items-center justify-center">
+            <ChartBlock title="Overall split" className="lg:self-start">
+              <div className="flex items-center justify-center">
                 <div className="h-36 w-36">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -627,13 +631,11 @@ export default function ProgressClient() {
                         label={false}
                       >
                         <Cell fill="var(--color-accent)" />
-                        <Cell fill="rgba(255,255,255,0.08)" />
+                        <Cell fill={themeVars.chartMuted} />
                       </Pie>
                       <Tooltip
                         contentStyle={{
-                          background: "rgba(12,12,12,0.9)",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: 12,
+                          ...chartTooltipStyle,
                           fontSize: 12,
                         }}
                         formatter={(value: number | undefined) => [value !== undefined ? `${value}%` : "-", "Completion"]}
@@ -645,7 +647,7 @@ export default function ProgressClient() {
               <div className="text-center text-xs text-muted">
                 {doneTasks} of {totalTasks} tasks
               </div>
-            </div>
+            </ChartBlock>
           </div>
         </GlassCard>
       </motion.div>
@@ -665,36 +667,35 @@ export default function ProgressClient() {
                 value={activeKey}
                 max={todayKey}
                 onChange={(e) => setSelectedKey(e.target.value)}
-                className="w-full rounded-full border border-border bg-card px-3 py-1 text-xs sm:w-auto"
+                className="w-full rounded-xl bg-card-strong/40 px-3 py-1.5 text-xs outline-none sm:w-auto"
               />
             </div>
 
-            <div className="grid gap-3">
+            <DataList>
               {(
                 [
                   ["Routine complete", "routineDone"],
                   ["Workout complete", "workoutDone"],
                 ] as const
               ).map(([label, key]) => (
-                <label
-                  key={key}
-                  className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3"
-                >
-                  <span className="text-sm text-foreground">{label}</span>
-                  <input
-                    type="checkbox"
-                    checked={selectedEntry[key] || false}
-                    onChange={() => {
-                      updateProgress(activeKey, {
-                        [key]: !selectedEntry[key],
-                      });
-                    }}
-                    className="h-5 w-5 accent-accent"
-                  />
-                </label>
+                <DataRow key={key} className="px-1">
+                  <label className="flex w-full cursor-pointer items-center justify-between gap-3">
+                    <span className="text-sm text-foreground">{label}</span>
+                    <input
+                      type="checkbox"
+                      checked={selectedEntry[key] || false}
+                      onChange={() => {
+                        updateProgress(activeKey, {
+                          [key]: !selectedEntry[key],
+                        });
+                      }}
+                      className="h-5 w-5 accent-accent"
+                    />
+                  </label>
+                </DataRow>
               ))}
 
-              <div className="grid gap-2">
+              <div className="grid gap-2 px-1 py-2.5">
                 <div className="flex items-center justify-between text-xs text-muted">
                   <span>Water intake</span>
                   <span>{(selectedEntry.water || 0).toFixed(1)} L</span>
@@ -714,7 +715,7 @@ export default function ProgressClient() {
                 />
               </div>
 
-              <div className="rounded-2xl border border-border bg-card px-4 py-3">
+              <div className="px-1 py-2.5">
                 <div className="text-xs text-muted">Routine tasks</div>
                 <div className="mt-1 text-sm font-semibold text-foreground">
                   {selectedTotals.tasksDone}/{selectedTotals.tasksTotal} completed
@@ -723,7 +724,7 @@ export default function ProgressClient() {
                   Manage tasks in the Routine tab
                 </div>
               </div>
-            </div>
+            </DataList>
           </GlassCard>
         </motion.div>
       )}

@@ -1,15 +1,28 @@
+/* ElevateFit service worker — push notifications only.
+ * This is not a full offline PWA. No precache / offline shell is installed.
+ * Register only after the user enables push in Settings.
+ */
+
 self.addEventListener("push", (event) => {
-  if (!event.data) {
-    return;
+  let payload = { title: "ElevateFit", body: "You have a reminder." };
+  try {
+    if (event.data) {
+      payload = { ...payload, ...event.data.json() };
+    }
+  } catch {
+    // keep defaults
   }
 
-  const payload = event.data.json();
-  const title = payload.title || "ElevateFit";
-  const options = {
-    body: payload.body || "Reminder",
-    icon: "/favicon.ico",
-    badge: "/favicon.ico",
-  };
+  event.waitUntil(
+    self.registration.showNotification(payload.title || "ElevateFit", {
+      body: payload.body || "",
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+    }),
+  );
+});
 
-  event.waitUntil(self.registration.showNotification(title, options));
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(clients.openWindow("/"));
 });

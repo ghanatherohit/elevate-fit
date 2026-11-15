@@ -7,20 +7,54 @@ import { User } from "@/lib/models/User";
 import { RecurringReminder } from "@/lib/models/RecurringReminder";
 import { sendEmail } from "@/lib/notifications/email";
 import { sendPush } from "@/lib/notifications/push";
+import {
+  getDayNameFromDateKey,
+  getIstParts,
+  toIstDateKey,
+} from "@/lib/datetime/ist";
+import { authorizeBearerSecret } from "@/lib/security/timing-safe";
+import { escapeHtml } from "@/lib/security/html";
 
-export async function GET() {
+function authorizeCron(request: Request) {
+  return authorizeBearerSecret(request, process.env.CRON_SECRET);
+}
+
+const weekdayToJsIndex: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+/** Build a Date for an IST wall-clock time on the IST calendar day of `now`. */
+function scheduledAtIst(now: Date, hours: number, minutes: number) {
+  const parts = getIstParts(now);
+  const utcMillis =
+    Date.UTC(parts.year, parts.month - 1, parts.day, hours, minutes, 0, 0) -
+    (5 * 60 + 30) * 60 * 1000;
+  return new Date(utcMillis);
+}
+
+export async function GET(request: Request) {
+  if (!authorizeCron(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   await connectToDatabase();
 
   const now = new Date();
-  const todayKey = now.toDateString();
-  const todayDay = now.getDay();
+  const todayKey = toIstDateKey(now);
+  const todayDay =
+    weekdayToJsIndex[getDayNameFromDateKey(todayKey)] ?? now.getUTCDay();
 
-  const recurringItems = await RecurringReminder.find({});
+  const recurringItems = await RecurringReminder.find({
+    paused: false,
+  }).limit(500);
 
   for (const recurring of recurringItems) {
-    if (recurring.paused) {
-      continue;
-    }
     const shouldRunDaily = recurring.frequency === "daily";
     const shouldRunWeekly =
       recurring.frequency === "weekly" &&
@@ -31,15 +65,14 @@ export async function GET() {
     }
 
     const [hours, minutes] = recurring.time.split(":").map(Number);
-    const scheduledFor = new Date(now);
-    scheduledFor.setHours(hours || 0, minutes || 0, 0, 0);
+    const scheduledFor = scheduledAtIst(now, hours || 0, minutes || 0);
 
     if (scheduledFor > now) {
       continue;
     }
 
     const lastKey = recurring.lastScheduledAt
-      ? new Date(recurring.lastScheduledAt).toDateString()
+      ? toIstDateKey(new Date(recurring.lastScheduledAt))
       : null;
     if (lastKey === todayKey) {
       continue;
@@ -49,7 +82,12 @@ export async function GET() {
       uid: recurring.uid,
       title: recurring.title,
       scheduledFor,
-      channels: recurring.channels,
+      channels: {
+        email: recurring.channels.email,
+        push: recurring.channels.push,
+        // SMS channel is not wired — ignore until a provider exists.
+        sms: false,
+      },
     });
 
     recurring.lastScheduledAt = scheduledFor;
@@ -59,7 +97,9 @@ export async function GET() {
   const due = await Reminder.find({
     status: "pending",
     scheduledFor: { $lte: now },
-  }).limit(50);
+  })
+    .sort({ scheduledFor: 1 })
+    .limit(50);
 
   if (!due.length) {
     return NextResponse.json({ processed: 0 });
@@ -75,15 +115,21 @@ export async function GET() {
     const channels = {
       email: reminder.channels.email && (preference?.email ?? true),
       push: reminder.channels.push && (preference?.push ?? false),
-      sms: reminder.channels.sms && (preference?.sms ?? false),
+      sms: false,
     };
+
+    const safeTitle = escapeHtml(reminder.title);
 
     try {
       if (channels.email && user?.email) {
         await sendEmail({
           to: user.email,
-          subject: `ElevateFit reminder: ${reminder.title}`,
-          html: `<p>${reminder.title}</p><p>Scheduled for ${reminder.scheduledFor.toLocaleString()}.</p>`,
+          subject: `ElevateFit reminder: ${reminder.title.slice(0, 80)}`,
+          html: `<p>${safeTitle}</p><p>Scheduled for ${escapeHtml(
+            reminder.scheduledFor.toLocaleString("en-IN", {
+              timeZone: "Asia/Kolkata",
+            }),
+          )} IST.</p>`,
         });
       }
 
@@ -95,13 +141,23 @@ export async function GET() {
         );
       }
 
-      if (channels.sms) {
-        // SMS delivery requires a paid provider. Add when credentials are available.
+      // SMS-only reminders are skipped rather than falsely marked sent.
+      if (
+        reminder.channels.sms &&
+        !channels.email &&
+        !channels.push &&
+        !reminder.channels.email &&
+        !reminder.channels.push
+      ) {
+        reminder.status = "skipped";
+        await reminder.save();
+        continue;
       }
 
       reminder.status = "sent";
       await reminder.save();
-    } catch {
+    } catch (error) {
+      console.error("[cron/reminders]", reminder._id, error);
       reminder.status = "failed";
       await reminder.save();
     }

@@ -2,38 +2,53 @@ import { NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { requireSession } from "@/lib/auth/session";
 import { RoutineChecklist } from "@/lib/models/RoutineChecklist";
+import { RoutineTaskList } from "@/lib/models/RoutineTaskList";
+import { DailyProgress } from "@/lib/models/DailyProgress";
+import {
+  buildIstWeekRange,
+  getDayNameFromDateKey,
+  shiftDateKey,
+} from "@/lib/datetime/ist";
 import {
   getFirstZodError,
   routineChecklistUpdateSchema,
 } from "@/lib/validation/schemas";
+import { deriveProgressFromChecklist } from "@/lib/progress/metrics";
+import type { DayName, TasksByDay } from "@/lib/routine/tasks";
 
 type ChecklistDoc = {
   date: string;
   completedItemIds?: string[];
 };
 
-const toDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_RANGE_DAYS = 366;
 
-const buildCurrentWeekRange = () => {
-  const now = new Date();
-  const mondayOffset = (now.getDay() + 6) % 7;
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(now.getDate() - mondayOffset);
+function parseDateRange(startDate: string, endDate: string) {
+  if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) {
+    return { error: "Dates must be YYYY-MM-DD." };
+  }
+  if (startDate > endDate) {
+    return { error: "startDate must be <= endDate." };
+  }
+  let days = 0;
+  let cursor = startDate;
+  while (cursor <= endDate && days <= MAX_RANGE_DAYS) {
+    days += 1;
+    cursor = shiftDateKey(cursor, 1);
+  }
+  if (days > MAX_RANGE_DAYS) {
+    return { error: `Date range cannot exceed ${MAX_RANGE_DAYS} days.` };
+  }
+  return { startDate, endDate };
+}
 
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-
-  return {
-    startDate: toDateKey(monday),
-    endDate: toDateKey(sunday),
-  };
-};
+async function tasksTotalForDate(uid: string, date: string) {
+  const taskList = await RoutineTaskList.findOne({ uid }).lean();
+  const day = getDayNameFromDateKey(date) as DayName;
+  const tasksByDay = (taskList?.tasksByDay ?? null) as TasksByDay | null;
+  return tasksByDay?.[day]?.length ?? 0;
+}
 
 export async function GET(request: Request) {
   const session = await requireSession();
@@ -42,9 +57,13 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const defaults = buildCurrentWeekRange();
+  const defaults = buildIstWeekRange();
   const startDate = searchParams.get("startDate") || defaults.startDate;
   const endDate = searchParams.get("endDate") || defaults.endDate;
+  const range = parseDateRange(startDate, endDate);
+  if ("error" in range && range.error) {
+    return NextResponse.json({ error: range.error }, { status: 400 });
+  }
 
   await connectToDatabase();
 
@@ -100,8 +119,35 @@ export async function PUT(request: Request) {
     { new: true, upsert: true },
   );
 
+  const completedItemIds = checklist.completedItemIds ?? [];
+  const tasksTotal = await tasksTotalForDate(session.uid, date);
+  const existingProgress = await DailyProgress.findOne({
+    uid: session.uid,
+    date,
+  }).lean();
+
+  const derived = deriveProgressFromChecklist({
+    completedItemIds,
+    tasksTotal,
+    workoutDone: existingProgress?.workoutDone,
+    water: existingProgress?.water,
+  });
+
+  await DailyProgress.findOneAndUpdate(
+    { uid: session.uid, date },
+    {
+      $set: derived,
+      $setOnInsert: {
+        uid: session.uid,
+        date,
+      },
+    },
+    { upsert: true },
+  );
+
   return NextResponse.json({
     date,
-    completedItemIds: checklist.completedItemIds,
+    completedItemIds,
+    progress: derived,
   });
 }

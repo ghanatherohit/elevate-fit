@@ -6,6 +6,7 @@ export type SessionPayload = {
   email?: string | null;
   name?: string | null;
   photoURL?: string | null;
+  sessionVersion?: number;
 };
 
 function getJWTSecret(): string {
@@ -16,10 +17,20 @@ function getJWTSecret(): string {
   return secret;
 }
 
+/** Short-lived access token; pair with sessionVersion for revocation. */
 export function signSession(payload: SessionPayload) {
-  return jwt.sign(payload, getJWTSecret(), { expiresIn: "7d" });
+  return jwt.sign(payload, getJWTSecret(), {
+    expiresIn: "24h",
+    algorithm: "HS256",
+    issuer: "elevate-fit",
+    audience: "elevate-fit",
+  });
 }
 
 export function verifySession(token: string) {
-  return jwt.verify(token, getJWTSecret()) as SessionPayload;
+  return jwt.verify(token, getJWTSecret(), {
+    algorithms: ["HS256"],
+    issuer: "elevate-fit",
+    audience: "elevate-fit",
+  }) as SessionPayload;
 }

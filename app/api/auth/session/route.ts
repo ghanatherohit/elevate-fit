@@ -4,13 +4,26 @@ import { adminAuth } from "@/lib/auth/firebase-admin";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { User } from "@/lib/models/User";
 import { signSession } from "@/lib/auth/jwt";
+import { SESSION_MAX_AGE_SECONDS } from "@/lib/auth/session";
 import { getFirstZodError, sessionRequestSchema } from "@/lib/validation/schemas";
-import {
-  normalizeUsername,
-} from "@/lib/validation/username";
+import { normalizeUsername } from "@/lib/validation/username";
+import { allowRequest, clientIp } from "@/lib/security/rate-limit";
 
 export async function POST(request: Request) {
   try {
+    const ip = clientIp(request);
+    const allowed = await allowRequest({
+      key: `auth-session:${ip}`,
+      limit: 20,
+      windowMs: 60_000,
+    });
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Too many attempts. Try again shortly." },
+        { status: 429 },
+      );
+    }
+
     const payload = sessionRequestSchema.safeParse(await request.json());
     if (!payload.success) {
       return NextResponse.json(
@@ -30,12 +43,20 @@ export async function POST(request: Request) {
       ? normalizeUsername(username)
       : undefined;
 
-    if (normalizedUsername) {
-      const existing = await User.findOne({
+    const existingUser = await User.findOne({ uid });
+
+    // Username is chosen once — if already set, ignore client payload and
+    // still establish the session (e.g. returning Google user on /register).
+    const shouldSetUsername = Boolean(
+      normalizedUsername && !existingUser?.username,
+    );
+
+    if (shouldSetUsername && normalizedUsername) {
+      const taken = await User.findOne({
         username: normalizedUsername,
         uid: { $ne: uid },
       });
-      if (existing) {
+      if (taken) {
         return NextResponse.json(
           { error: "Username already in use" },
           { status: 409 },
@@ -43,11 +64,46 @@ export async function POST(request: Request) {
       }
     }
 
-    const user = await User.findOneAndUpdate(
-      { uid },
-      { uid, email, name, photoURL: picture, username: normalizedUsername },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
-    );
+    let user;
+    try {
+      user = await User.findOneAndUpdate(
+        { uid },
+        {
+          $set: {
+            uid,
+            email,
+            name,
+            // Only overwrite when Google/Firebase actually sent a picture claim.
+            ...(picture ? { photoURL: picture } : {}),
+            ...(shouldSetUsername ? { username: normalizedUsername } : {}),
+          },
+          $setOnInsert: { sessionVersion: 1, dietFormulaVersion: 1 },
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      );
+    } catch (error) {
+      // Race: unique username index can still throw if two signups collide.
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? (error as { code?: number }).code
+          : undefined;
+      if (code === 11000) {
+        const keyPattern =
+          error && typeof error === "object" && "keyPattern" in error
+            ? (error as { keyPattern?: Record<string, unknown> }).keyPattern
+            : undefined;
+        const emailConflict = Boolean(keyPattern && "email" in keyPattern);
+        return NextResponse.json(
+          {
+            error: emailConflict
+              ? "That email is already registered."
+              : "Username already in use",
+          },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
 
     const token = signSession({
       uid: user.uid,
@@ -55,6 +111,7 @@ export async function POST(request: Request) {
       email: user.email,
       name: user.name,
       photoURL: user.photoURL,
+      sessionVersion: user.sessionVersion ?? 1,
     });
 
     const cookieStore = await cookies();
@@ -63,12 +120,12 @@ export async function POST(request: Request) {
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       path: "/",
-      maxAge: 60 * 60 * 24 * 7,
+      maxAge: SESSION_MAX_AGE_SECONDS,
     });
 
     return NextResponse.json({ user });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Session failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[auth/session]", error);
+    return NextResponse.json({ error: "Session failed" }, { status: 500 });
   }
 }

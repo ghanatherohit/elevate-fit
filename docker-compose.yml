@@ -1,0 +1,21 @@
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - elevatefit_mongo:/data/db
+
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/elevatefit
+    depends_on:
+      - mongo
+
+volumes:
+  elevatefit_mongo:
