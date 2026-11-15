@@ -2,9 +2,31 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import GlassCard from "@/components/shared/GlassCard";
+import {
+  DataList,
+  DataRow,
+  OpenHint,
+  SoftChip,
+  StatCell,
+  StatStrip,
+  TypeBody,
+  TypeHeading,
+  TypeMeta,
+  TypeTitle,
+} from "@/components/shared/DataSurfaces";
+import { useOverlayLock } from "@/components/shared/OverlayLock";
 import SectionHeader from "@/components/shared/SectionHeader";
 import { recipes, type Recipe } from "@/lib/data/recipes";
+import {
+  calculateDietTargets,
+  type ActivityLevel,
+  type DietProfile,
+  type DietTargets,
+  type Goal,
+  type Sex,
+} from "@/lib/diet/planner";
 
 const container = {
   hidden: { opacity: 0, y: 8 },
@@ -24,36 +46,15 @@ const mealTabs = ["Breakfast", "Lunch", "Dinner", "Snack"] as const;
 type MealTab = (typeof mealTabs)[number];
 type RoutineMeal = Exclude<MealTab, "Snack">;
 
-type Sex = "male" | "female";
-type ActivityLevel =
-  | "sedentary"
-  | "light"
-  | "moderate"
-  | "active"
-  | "very-active";
-type Goal = "fat-loss" | "recomp" | "muscle-gain" | "maintenance";
+type PageTab = "meals" | "profile";
+
+const pageTabs: Array<{ id: PageTab; label: string; hint: string }> = [
+  { id: "meals", label: "Meals", hint: "Plan & recipes" },
+  { id: "profile", label: "Profile", hint: "Daily targets" },
+];
+
 type HeightUnit = "cm" | "ft";
 type CalculatorView = "summary" | "detailed";
-
-type DietProfile = {
-  age: number;
-  sex: Sex;
-  heightCm: number;
-  weightKg: number;
-  activityLevel: ActivityLevel;
-  goal: Goal;
-};
-
-type DietTargets = {
-  bmr: number;
-  tdee: number;
-  targetCalories: number;
-  proteinG: number;
-  carbsG: number;
-  fatG: number;
-  fiberG: number;
-  waterMl: number;
-};
 
 type DietProfileApiResponse = {
   profile: DietProfile | null;
@@ -92,28 +93,6 @@ type ToastState = {
 };
 
 const routineMeals: RoutineMeal[] = ["Breakfast", "Lunch", "Dinner"];
-
-const activityMultipliers: Record<ActivityLevel, number> = {
-  sedentary: 1.2,
-  light: 1.375,
-  moderate: 1.55,
-  active: 1.725,
-  "very-active": 1.9,
-};
-
-const goalCalorieMultiplier: Record<Goal, number> = {
-  "fat-loss": 0.82,
-  recomp: 0.95,
-  "muscle-gain": 1.1,
-  maintenance: 1,
-};
-
-const goalProteinFactor: Record<Goal, number> = {
-  "fat-loss": 2,
-  recomp: 1.9,
-  "muscle-gain": 1.8,
-  maintenance: 1.6,
-};
 
 const activityOptions: Array<{ value: ActivityLevel; label: string }> = [
   { value: "sedentary", label: "Sedentary" },
@@ -202,33 +181,6 @@ const pickDailyRoutineMeals = (allRecipes: Recipe[], date: Date) => {
   );
 };
 
-const calculateDietTargets = (profile: DietProfile): DietTargets => {
-  const bmrBase =
-    10 * profile.weightKg + 6.25 * profile.heightCm - 5 * profile.age;
-  const bmr = profile.sex === "male" ? bmrBase + 5 : bmrBase - 161;
-  const tdee = bmr * activityMultipliers[profile.activityLevel];
-  const targetCalories = tdee * goalCalorieMultiplier[profile.goal];
-
-  const proteinG = profile.weightKg * goalProteinFactor[profile.goal];
-  const fatG = profile.weightKg * 0.8;
-  const caloriesAfterProteinFat = targetCalories - (proteinG * 4 + fatG * 9);
-  const carbsG = Math.max(0, caloriesAfterProteinFat / 4);
-
-  const fiberG = Math.max(25, Math.round((targetCalories / 1000) * 14));
-  const waterMl = Math.round(profile.weightKg * 35);
-
-  return {
-    bmr,
-    tdee,
-    targetCalories,
-    proteinG,
-    carbsG,
-    fatG,
-    fiberG,
-    waterMl,
-  };
-};
-
 const parseJsonSafe = async <T,>(response: Response): Promise<T | null> => {
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
@@ -289,6 +241,7 @@ const buildLocalTotals = (targets: DietTargets, meals: DailyDietMeal[]) => {
 export default function RecipesClient() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedTab, setSelectedTab] = useState<MealTab>("Breakfast");
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -309,6 +262,7 @@ export default function RecipesClient() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [onboardingRequired, setOnboardingRequired] = useState(false);
+  const [pageTab, setPageTab] = useState<PageTab>("meals");
   const [dailyDietMeals, setDailyDietMeals] = useState<DailyDietMeal[]>([]);
   const [dailyTotals, setDailyTotals] = useState<DailyDietResponse["totals"] | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -583,6 +537,7 @@ export default function RecipesClient() {
     setSavingProfile(true);
     setProfileError(null);
 
+    const finishedOnboarding = onboardingRequired;
     const localTargets = calculateDietTargets(profile);
     setTargets(localTargets);
     setOnboardingRequired(false);
@@ -593,6 +548,9 @@ export default function RecipesClient() {
     setDailyDietMeals(localMeals);
     setDailyTotals(buildLocalTotals(localTargets, localMeals));
     showToast("success", "Profile updated.");
+    if (finishedOnboarding) {
+      setPageTab("meals");
+    }
 
     try {
       const response = await fetch("/api/profile/diet", {
@@ -629,6 +587,12 @@ export default function RecipesClient() {
     }
   };
 
+  useEffect(() => {
+    if (onboardingRequired) {
+      setPageTab("profile");
+    }
+  }, [onboardingRequired]);
+
   return (
     <>
       <AnimatePresence>
@@ -655,7 +619,7 @@ export default function RecipesClient() {
       </AnimatePresence>
 
       <motion.div
-        className="grid gap-3 sm:gap-4"
+        className="grid gap-3"
         variants={container}
         initial="hidden"
         animate="show"
@@ -663,574 +627,666 @@ export default function RecipesClient() {
         <motion.div variants={item}>
           <SectionHeader
             title="Recipes"
-            action={`${filteredRecipes.length} total recipes`}
+            action={pageTab === "meals" ? `${filteredRecipes.length} recipes` : "Daily targets"}
           />
         </motion.div>
 
         <motion.div variants={item}>
-          <GlassCard className="grid gap-4 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-sm font-semibold text-foreground">Diet profile calculator</div>
-                <div className="text-[11px] text-muted">One-time setup, editable anytime</div>
-              </div>
-              <button
-                onClick={() => {
-                  void saveDietProfile();
-                }}
-                className="w-full rounded-2xl border border-accent/35 bg-accent/15 px-4 py-2.5 text-xs font-semibold text-accent sm:w-auto"
-                disabled={savingProfile}
-              >
-                {savingProfile ? "Saving..." : onboardingRequired ? "Save profile" : "Update profile"}
-              </button>
-            </div>
-
-            {onboardingRequired ? (
-              <div className="rounded-2xl border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent">
-                Complete this once to enable personalized daily meal planning.
-              </div>
-            ) : null}
-
-            {profileError ? (
-              <div className="rounded-2xl border border-border bg-card px-3 py-2 text-xs text-accent">
-                {profileError}
-              </div>
-            ) : null}
-            <div className="grid gap-4">
-              <div className="grid gap-3">
-                <div className="rounded-2xl border border-border bg-card px-3 py-3">
-                  <div className="text-xs font-semibold text-foreground">Inputs</div>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    <label className="grid gap-1 text-xs text-muted">
-                      Age
-                      <input
-                        type="number"
-                        min={14}
-                        max={90}
-                        value={profile.age}
-                        onChange={(event) =>
-                          setProfile((prev) => ({
-                            ...prev,
-                            age: Number(event.target.value) || prev.age,
-                          }))
-                        }
-                        className="rounded-xl border border-border bg-card-strong px-3 py-2.5 text-sm text-foreground"
-                      />
-                    </label>
-
-                    <label className="grid gap-1 text-xs text-muted">
-                      Sex
-                      <select
-                        value={profile.sex}
-                        onChange={(event) =>
-                          setProfile((prev) => ({ ...prev, sex: event.target.value as Sex }))
-                        }
-                        className="rounded-xl border border-border bg-card-strong px-3 py-2.5 text-sm text-foreground"
-                      >
-                        <option value="male">Male</option>
-                        <option value="female">Female</option>
-                      </select>
-                    </label>
-
-                    <label className="grid gap-1 text-xs text-muted">
-                      Height
-                      <div className="grid gap-2">
-                        <div className="inline-flex w-fit rounded-xl border border-border bg-card-strong">
-                          <button
-                            type="button"
-                            onClick={() => setHeightUnit("cm")}
-                            className={`rounded-l-xl px-3 py-1.5 text-[11px] font-medium ${
-                              heightUnit === "cm"
-                                ? "bg-accent/15 text-accent"
-                                : "text-muted"
-                            }`}
-                          >
-                            cm
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setHeightUnit("ft")}
-                            className={`rounded-r-xl px-3 py-1.5 text-[11px] font-medium ${
-                              heightUnit === "ft"
-                                ? "bg-accent/15 text-accent"
-                                : "text-muted"
-                            }`}
-                          >
-                            ft/in
-                          </button>
-                        </div>
-
-                        {heightUnit === "cm" ? (
-                          <input
-                            type="number"
-                            min={130}
-                            max={220}
-                            value={profile.heightCm}
-                            onChange={(event) =>
-                              setProfile((prev) => ({
-                                ...prev,
-                                heightCm: Number(event.target.value) || prev.heightCm,
-                              }))
-                            }
-                            className="rounded-xl border border-border bg-card-strong px-3 py-2.5 text-sm text-foreground"
-                          />
-                        ) : (
-                          <div className="grid grid-cols-2 gap-2">
-                            <input
-                              type="number"
-                              min={3}
-                              max={8}
-                              value={heightFeet}
-                              onChange={(event) => {
-                                const nextFeet = Math.min(8, Math.max(3, Number(event.target.value) || 0));
-                                setHeightFeet(nextFeet);
-                                setProfile((prev) => ({
-                                  ...prev,
-                                  heightCm: feetInchesToCm(nextFeet, heightInches),
-                                }));
-                              }}
-                              className="rounded-xl border border-border bg-card-strong px-3 py-2.5 text-sm text-foreground"
-                              placeholder="Feet"
-                            />
-                            <input
-                              type="number"
-                              min={0}
-                              max={11}
-                              value={heightInches}
-                              onChange={(event) => {
-                                const nextInches = Math.min(11, Math.max(0, Number(event.target.value) || 0));
-                                setHeightInches(nextInches);
-                                setProfile((prev) => ({
-                                  ...prev,
-                                  heightCm: feetInchesToCm(heightFeet, nextInches),
-                                }));
-                              }}
-                              className="rounded-xl border border-border bg-card-strong px-3 py-2.5 text-sm text-foreground"
-                              placeholder="Inches"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    </label>
-
-                    <label className="grid gap-1 text-xs text-muted">
-                      Weight (kg)
-                      <input
-                        type="number"
-                        min={35}
-                        max={200}
-                        value={profile.weightKg}
-                        onChange={(event) =>
-                          setProfile((prev) => ({
-                            ...prev,
-                            weightKg: Number(event.target.value) || prev.weightKg,
-                          }))
-                        }
-                        className="rounded-xl border border-border bg-card-strong px-3 py-2.5 text-sm text-foreground"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="mt-3 grid gap-2">
-                    <div className="text-xs text-muted">Activity</div>
-                    <div className="grid grid-cols-2 gap-1 xs:gap-2 sm:grid-cols-3 lg:grid-cols-3">
-                      {activityOptions.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() =>
-                            setProfile((prev) => ({ ...prev, activityLevel: option.value }))
-                          }
-                          className={`flex min-h-10.5 items-center justify-center rounded-xl border px-2 py-2 text-center text-[11px] leading-tight font-medium transition sm:text-xs ${
-                            profile.activityLevel === option.value
-                              ? "border-accent bg-accent/15 text-accent"
-                              : "border-border bg-card-strong text-muted"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid gap-2">
-                    <div className="text-xs text-muted">Goal</div>
-                    <div className="grid grid-cols-2 gap-1 xs:gap-2 sm:grid-cols-2">
-                      {goalOptions.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setProfile((prev) => ({ ...prev, goal: option.value }))}
-                          className={`flex min-h-10.5 items-center justify-center rounded-xl border px-2 py-2 text-center text-[11px] leading-tight font-medium transition sm:text-xs ${
-                            profile.goal === option.value
-                              ? "border-accent bg-accent/15 text-accent"
-                              : "border-border bg-card-strong text-muted"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3">
-                <div className="rounded-2xl border border-border bg-card px-3 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-semibold text-foreground">Outputs (daily intake)</div>
-                    <div className="inline-flex rounded-xl border border-border bg-card-strong">
-                      <button
-                        type="button"
-                        onClick={() => setCalculatorView("summary")}
-                        className={`rounded-l-xl px-3 py-1.5 text-[11px] font-medium ${
-                          calculatorView === "summary"
-                            ? "bg-accent/15 text-accent"
-                            : "text-muted"
-                        }`}
-                      >
-                        Summary
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCalculatorView("detailed")}
-                        className={`rounded-r-xl px-3 py-1.5 text-[11px] font-medium ${
-                          calculatorView === "detailed"
-                            ? "bg-accent/15 text-accent"
-                            : "text-muted"
-                        }`}
-                      >
-                        Detailed
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-1 gap-2 xs:grid-cols-2">
-                    <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                      <div className="text-[10px] text-muted">Target calories</div>
-                      <div className="text-sm font-semibold text-foreground">
-                        {Math.round(targets.targetCalories)} kcal
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                      <div className="text-[10px] text-muted">Protein</div>
-                      <div className="text-sm font-semibold text-foreground">{Math.round(targets.proteinG)} g</div>
-                    </div>
-                    <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                      <div className="text-[10px] text-muted">Carbs</div>
-                      <div className="text-sm font-semibold text-foreground">{Math.round(targets.carbsG)} g</div>
-                    </div>
-                    <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                      <div className="text-[10px] text-muted">Fats</div>
-                      <div className="text-sm font-semibold text-foreground">{Math.round(targets.fatG)} g</div>
-                    </div>
-                  </div>
-
-                  {calculatorView === "summary" ? (
-                    <>
-                      <div className="mt-3 rounded-xl border border-border bg-card-strong px-3 py-3">
-                        <div className="text-[11px] font-semibold text-foreground">Macro split</div>
-                        <div className="mt-2 grid gap-2">
-                          <div>
-                            <div className="mb-1 flex items-center justify-between text-[11px] text-muted">
-                              <span>Protein</span>
-                              <span>{macroSplit.proteinPercent}%</span>
-                            </div>
-                            <div className="h-1.5 rounded-full bg-card">
-                              <div
-                                className="h-full rounded-full bg-accent"
-                                style={{ width: `${macroSplit.proteinPercent}%` }}
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <div className="mb-1 flex items-center justify-between text-[11px] text-muted">
-                              <span>Carbs</span>
-                              <span>{macroSplit.carbsPercent}%</span>
-                            </div>
-                            <div className="h-1.5 rounded-full bg-card">
-                              <div
-                                className="h-full rounded-full bg-accent/75"
-                                style={{ width: `${macroSplit.carbsPercent}%` }}
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <div className="mb-1 flex items-center justify-between text-[11px] text-muted">
-                              <span>Fat</span>
-                              <span>{macroSplit.fatPercent}%</span>
-                            </div>
-                            <div className="h-1.5 rounded-full bg-card">
-                              <div
-                                className="h-full rounded-full bg-accent/55"
-                                style={{ width: `${macroSplit.fatPercent}%` }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 grid grid-cols-1 gap-2 xs:grid-cols-2">
-                        <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                          <div className="text-[10px] text-muted">BMR</div>
-                          <div className="text-sm font-semibold text-foreground">{Math.round(targets.bmr)}</div>
-                        </div>
-                        <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                          <div className="text-[10px] text-muted">TDEE</div>
-                          <div className="text-sm font-semibold text-foreground">{Math.round(targets.tdee)}</div>
-                        </div>
-                        <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                          <div className="text-[10px] text-muted">Fiber target</div>
-                          <div className="text-sm font-semibold text-foreground">{targets.fiberG} g</div>
-                        </div>
-                        <div className="rounded-xl border border-border bg-card-strong px-3 py-2">
-                          <div className="text-[10px] text-muted">Water target</div>
-                          <div className="text-sm font-semibold text-foreground">{(targets.waterMl / 1000).toFixed(1)} L</div>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="mt-3 overflow-x-auto rounded-xl border border-border">
-                      <table className="w-full border-collapse text-left text-[10px]">
-                        <thead className="bg-card-strong text-muted">
-                          <tr>
-                            <th className="whitespace-nowrap px-2 py-2 font-medium">Nutrient</th>
-                            <th className="whitespace-nowrap px-2 py-2 font-medium">Target</th>
-                            <th className="whitespace-nowrap px-2 py-2 font-medium">Guidance</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {nutrientTableRows.map((row) => (
-                            <tr key={row.nutrient} className="border-t border-border">
-                              <td className="whitespace-nowrap px-2 py-2 text-foreground">{row.nutrient}</td>
-                              <td className="whitespace-nowrap px-2 py-2 font-semibold text-foreground">{row.target}</td>
-                              <td className="whitespace-nowrap px-2 py-2 text-muted text-[9px]">{row.note}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-        </motion.div>
-
-        <motion.div variants={item}>
-          <GlassCard className="grid gap-3">
-            <div className="text-xs text-muted">Recipe explorer</div>
-            <div className="text-sm font-semibold text-foreground">
-              Lean protein, whole grains, vegetables, fruits, and portion control
-            </div>
-
-            <input
-              type="text"
-              placeholder="Search recipes..."
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              className="rounded-2xl border border-border bg-card px-4 py-2.5 text-sm text-foreground placeholder:text-muted"
-            />
-
-            <div className="grid gap-2">
-              <div className="text-xs text-muted">Filter by tags</div>
-              <div className="flex flex-wrap gap-2">
-                {allTags.map((tag) => (
-                  <button
-                    key={tag}
-                    onClick={() => toggleTag(tag)}
-                    className={`rounded-full border px-2.5 py-1 text-[10px] transition xs:px-3 xs:py-1.5 xs:text-[11px] ${
-                      selectedTags.includes(tag)
-                        ? "border-accent bg-accent/15 text-accent"
-                        : "border-border bg-card-strong text-muted"
+          <div
+            className="grid grid-cols-2 gap-1 rounded-2xl bg-card-strong/40 p-1"
+            role="tablist"
+            aria-label="Recipes sections"
+          >
+            {pageTabs.map((entry) => {
+              const active = pageTab === entry.id;
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setPageTab(entry.id)}
+                  className={`rounded-xl px-2 py-2.5 text-center transition sm:px-3 ${
+                    active
+                      ? "bg-accent/15 text-accent"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  <div className="text-xs font-semibold sm:text-sm">{entry.label}</div>
+                  <div
+                    className={`mt-0.5 text-[10px] ${
+                      active ? "text-accent/80" : "text-muted"
                     }`}
                   >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {(searchQuery || selectedTags.length > 0) && (
-              <button
-                onClick={() => {
-                  setSearchQuery("");
-                  setSelectedTags([]);
-                }}
-                className="self-start rounded-2xl border border-border bg-card-strong px-3 py-1.5 text-[11px] text-muted"
-              >
-                Clear filters
-              </button>
-            )}
-          </GlassCard>
-        </motion.div>
-
-        <motion.div variants={item}>
-          <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
-            {mealTabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setSelectedTab(tab)}
-                className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-[11px] font-medium transition xs:px-4 xs:py-2 xs:text-xs ${
-                  selectedTab === tab
-                    ? "border-accent bg-accent/15 text-accent"
-                    : "border-border bg-card text-muted"
-                }`}
-              >
-                {tab} ({recipesByMeal[tab].length})
-              </button>
-            ))}
+                    {entry.hint}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </motion.div>
 
-        <motion.div variants={item}>
-          <GlassCard className="grid gap-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-foreground">
-                Linked daily routine meals
+        {pageTab === "profile" ? (
+          <motion.div
+            key="profile"
+            variants={item}
+            initial="hidden"
+            animate="show"
+            role="tabpanel"
+            aria-label="Diet profile"
+          >
+            <GlassCard className="grid gap-4">
+              <div>
+                <div className="type-kicker">Diet profile</div>
+                <TypeTitle>
+                  {onboardingRequired ? "Set your targets" : "Daily targets"}
+                </TypeTitle>
+                {onboardingRequired ? (
+                  <TypeBody className="mt-1 text-accent">
+                    Complete this once to unlock personalized meal planning.
+                  </TypeBody>
+                ) : null}
+                {profileError ? (
+                  <TypeMeta className="mt-1 text-accent">{profileError}</TypeMeta>
+                ) : null}
               </div>
-              <div className="text-[10px] text-muted">Auto-updates daily by your targets</div>
-            </div>
 
-            {dailyTotals ? (
+            <div className="grid gap-4">
               <div className="grid gap-2 sm:grid-cols-2">
-                <div className="rounded-2xl border border-border bg-card px-3 py-2.5">
-                  <div className="text-[10px] text-muted">Calories completion</div>
-                  <div className="text-xs font-semibold text-foreground">
-                    {dailyTotals.plannedCalories} / {dailyTotals.targetCalories} kcal
-                  </div>
-                  <div className="mt-1 h-1.5 rounded-full bg-card-strong">
-                    <div
-                      className="h-full rounded-full bg-accent"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.max(
-                            0,
-                            (dailyTotals.plannedCalories / Math.max(1, dailyTotals.targetCalories)) * 100,
-                          ),
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-border bg-card px-3 py-2.5">
-                  <div className="text-[10px] text-muted">Protein completion</div>
-                  <div className="text-xs font-semibold text-foreground">
-                    {dailyTotals.plannedProteinG} / {dailyTotals.targetProteinG} g
-                  </div>
-                  <div className="mt-1 h-1.5 rounded-full bg-card-strong">
-                    <div
-                      className="h-full rounded-full bg-accent"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.max(
-                            0,
-                            (dailyTotals.plannedProteinG / Math.max(1, dailyTotals.targetProteinG)) * 100,
-                          ),
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="grid gap-2 sm:grid-cols-3">
-              {routineMeals.map((meal) => {
-                const apiEntry = dailyDietLookup[meal];
-                const fallbackEntry = dailyRoutineMeals[meal];
-
-                if (!apiEntry && !fallbackEntry) {
-                  return (
-                    <div
-                      key={meal}
-                      className="rounded-2xl border border-border bg-card px-3 py-3"
-                    >
-                      <div className="text-[10px] text-muted">{meal}</div>
-                      <div className="text-xs text-muted">No recipe available</div>
-                    </div>
-                  );
-                }
-
-                return (
-                  <button
-                    key={meal}
-                    onClick={() =>
-                      setSelectedRecipe(apiEntry ? apiEntry.recipe : (fallbackEntry as Recipe))
+                <label className="grid gap-1 text-xs text-muted">
+                  Age
+                  <input
+                    type="number"
+                    min={14}
+                    max={90}
+                    value={profile.age}
+                    onChange={(event) =>
+                      setProfile((prev) => ({
+                        ...prev,
+                        age: Number(event.target.value) || prev.age,
+                      }))
                     }
-                    className="rounded-2xl border border-border bg-card px-3 py-3 text-left transition hover:border-accent/40"
+                    className="soft-tile w-full px-3 py-2 text-sm text-foreground"
+                  />
+                </label>
+
+                <label className="grid gap-1 text-xs text-muted">
+                  Sex
+                  <select
+                    value={profile.sex}
+                    onChange={(event) =>
+                      setProfile((prev) => ({
+                        ...prev,
+                        sex: event.target.value as Sex,
+                      }))
+                    }
+                    className="soft-tile w-full px-3 py-2 text-sm text-foreground"
                   >
-                    <div className="text-[11px] text-muted">{meal}</div>
-                    <div className="mt-1 text-sm font-semibold text-foreground line-clamp-2">
-                      {apiEntry ? apiEntry.recipe.title : fallbackEntry?.title}
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-xs text-muted">
+                  Height
+                  <div className="grid gap-1.5">
+                    <div className="inline-flex w-fit rounded-lg bg-card-strong/50 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setHeightUnit("cm")}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                          heightUnit === "cm"
+                            ? "bg-accent/15 text-accent"
+                            : "text-muted"
+                        }`}
+                      >
+                        cm
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHeightUnit("ft")}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                          heightUnit === "ft"
+                            ? "bg-accent/15 text-accent"
+                            : "text-muted"
+                        }`}
+                      >
+                        ft/in
+                      </button>
                     </div>
-                    {apiEntry ? (
-                      <>
-                        <div className="mt-1 text-[11px] text-muted">
-                          Target: {apiEntry.targetCalories} kcal / {apiEntry.targetProteinG}g protein
-                        </div>
-                        <div className="mt-0.5 text-[11px] text-muted">
-                          Suggested portion: x{apiEntry.portionMultiplier.toFixed(2)}
-                        </div>
-                        <div className="mt-0.5 text-[11px] text-muted">
-                          Adjusted: {apiEntry.adjustedCalories} kcal / {apiEntry.adjustedProteinG}g protein
-                        </div>
-                      </>
+
+                    {heightUnit === "cm" ? (
+                      <input
+                        type="number"
+                        min={130}
+                        max={220}
+                        value={profile.heightCm}
+                        onChange={(event) =>
+                          setProfile((prev) => ({
+                            ...prev,
+                            heightCm: Number(event.target.value) || prev.heightCm,
+                          }))
+                        }
+                        className="soft-tile w-full px-3 py-2 text-sm text-foreground"
+                      />
                     ) : (
-                      <div className="mt-1 text-[11px] text-muted">
-                        {fallbackEntry?.timeMinutes} min • {fallbackEntry?.protein} protein
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="number"
+                          min={3}
+                          max={8}
+                          value={heightFeet}
+                          onChange={(event) => {
+                            const nextFeet = Math.min(
+                              8,
+                              Math.max(3, Number(event.target.value) || 0),
+                            );
+                            setHeightFeet(nextFeet);
+                            setProfile((prev) => ({
+                              ...prev,
+                              heightCm: feetInchesToCm(nextFeet, heightInches),
+                            }));
+                          }}
+                          className="soft-tile w-full px-3 py-2 text-sm text-foreground"
+                          placeholder="Feet"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={11}
+                          value={heightInches}
+                          onChange={(event) => {
+                            const nextInches = Math.min(
+                              11,
+                              Math.max(0, Number(event.target.value) || 0),
+                            );
+                            setHeightInches(nextInches);
+                            setProfile((prev) => ({
+                              ...prev,
+                              heightCm: feetInchesToCm(heightFeet, nextInches),
+                            }));
+                          }}
+                          className="soft-tile w-full px-3 py-2 text-sm text-foreground"
+                          placeholder="Inches"
+                        />
                       </div>
                     )}
+                  </div>
+                </label>
+
+                <label className="grid gap-1 text-xs text-muted">
+                  Weight (kg)
+                  <input
+                    type="number"
+                    min={35}
+                    max={200}
+                    value={profile.weightKg}
+                    onChange={(event) =>
+                      setProfile((prev) => ({
+                        ...prev,
+                        weightKg: Number(event.target.value) || prev.weightKg,
+                      }))
+                    }
+                    className="soft-tile w-full px-3 py-2 text-sm text-foreground"
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-1.5">
+                <div className="text-xs text-muted">Activity</div>
+                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                  {activityOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setProfile((prev) => ({
+                          ...prev,
+                          activityLevel: option.value,
+                        }))
+                      }
+                      className={`rounded-lg px-2 py-2 text-center text-[11px] font-medium transition ${
+                        profile.activityLevel === option.value
+                          ? "bg-accent/15 text-accent"
+                          : "bg-card-strong/40 text-muted"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-1.5">
+                <div className="text-xs text-muted">Goal</div>
+                <div className="grid grid-cols-2 gap-1">
+                  {goalOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setProfile((prev) => ({ ...prev, goal: option.value }))
+                      }
+                      className={`rounded-lg px-2 py-2 text-center text-[11px] font-medium transition ${
+                        profile.goal === option.value
+                          ? "bg-accent/15 text-accent"
+                          : "bg-card-strong/40 text-muted"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-2 border-t border-border/40 pt-3">
+                <div className="flex items-center justify-between gap-2">
+                  <TypeHeading>Live targets</TypeHeading>
+                  <div className="inline-flex rounded-lg bg-card-strong/50 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setCalculatorView("summary")}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                        calculatorView === "summary"
+                          ? "bg-accent/15 text-accent"
+                          : "text-muted"
+                      }`}
+                    >
+                      Summary
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCalculatorView("detailed")}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                        calculatorView === "detailed"
+                          ? "bg-accent/15 text-accent"
+                          : "text-muted"
+                      }`}
+                    >
+                      Details
+                    </button>
+                  </div>
+                </div>
+
+                <StatStrip cols={4}>
+                  <StatCell
+                    label="Cal"
+                    value={`${Math.round(targets.targetCalories)}`}
+                  />
+                  <StatCell
+                    label="Protein"
+                    value={`${Math.round(targets.proteinG)}g`}
+                  />
+                  <StatCell
+                    label="Carbs"
+                    value={`${Math.round(targets.carbsG)}g`}
+                  />
+                  <StatCell
+                    label="Fat"
+                    value={`${Math.round(targets.fatG)}g`}
+                  />
+                </StatStrip>
+
+                {calculatorView === "summary" ? (
+                  <div className="grid gap-2">
+                    <div className="grid gap-1.5">
+                      {(
+                        [
+                          ["Protein", macroSplit.proteinPercent, "bg-accent"],
+                          ["Carbs", macroSplit.carbsPercent, "bg-accent/75"],
+                          ["Fat", macroSplit.fatPercent, "bg-accent/55"],
+                        ] as const
+                      ).map(([label, percent, bar]) => (
+                        <div key={label}>
+                          <div className="mb-0.5 flex justify-between text-[11px] text-muted">
+                            <span>{label}</span>
+                            <span>{percent}%</span>
+                          </div>
+                          <div className="h-1 rounded-full bg-card-strong/60">
+                            <div
+                              className={`h-full rounded-full ${bar}`}
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 text-[11px] text-muted">
+                      <SoftChip>BMR {Math.round(targets.bmr)}</SoftChip>
+                      <SoftChip>TDEE {Math.round(targets.tdee)}</SoftChip>
+                      <SoftChip>Fiber {targets.fiberG}g</SoftChip>
+                      <SoftChip>
+                        Water {(targets.waterMl / 1000).toFixed(1)}L
+                      </SoftChip>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-left text-[10px]">
+                      <thead className="text-muted">
+                        <tr>
+                          <th className="py-1.5 pr-2 font-medium">Nutrient</th>
+                          <th className="py-1.5 pr-2 font-medium">Target</th>
+                          <th className="py-1.5 font-medium">Note</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {nutrientTableRows.map((row) => (
+                          <tr
+                            key={row.nutrient}
+                            className="border-t border-border/50"
+                          >
+                            <td className="py-1.5 pr-2 text-foreground">
+                              {row.nutrient}
+                            </td>
+                            <td className="py-1.5 pr-2 font-semibold text-foreground">
+                              {row.target}
+                            </td>
+                            <td className="py-1.5 text-muted">{row.note}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  void saveDietProfile();
+                }}
+                className="w-full rounded-xl bg-accent/15 px-4 py-2.5 text-xs font-semibold text-accent"
+                disabled={savingProfile}
+              >
+                {savingProfile
+                  ? "Saving..."
+                  : onboardingRequired
+                    ? "Save profile"
+                    : "Update profile"}
+              </button>
+            </div>
+            </GlassCard>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="meals"
+            className="grid gap-3"
+            variants={item}
+            initial="hidden"
+            animate="show"
+            role="tabpanel"
+            aria-label="Meals"
+          >
+        {!onboardingRequired ? (
+          <motion.div variants={item}>
+            <GlassCard className="grid gap-2.5">
+                <div>
+                  <div className="type-kicker">Today</div>
+                  <TypeTitle>Meal plan</TypeTitle>
+                </div>
+
+              {dailyTotals ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-0">
+                  {(
+                    [
+                      {
+                        key: "cal",
+                        label: "Calories",
+                        planned: dailyTotals.plannedCalories,
+                        target: dailyTotals.targetCalories,
+                        unit: "kcal",
+                        edge: "sm:border-r sm:border-border/50 sm:pr-4",
+                      },
+                      {
+                        key: "protein",
+                        label: "Protein",
+                        planned: dailyTotals.plannedProteinG,
+                        target: dailyTotals.targetProteinG,
+                        unit: "g",
+                        edge: "sm:pl-4",
+                      },
+                    ] as const
+                  ).map((metric) => {
+                    const ratio =
+                      metric.planned / Math.max(1, metric.target);
+                    const percent = Math.min(100, Math.max(0, ratio * 100));
+                    const over = ratio > 1.02;
+
+                    return (
+                      <div
+                        key={metric.key}
+                        className={`grid min-w-0 gap-1 ${metric.edge}`}
+                      >
+                        <div className="flex items-baseline justify-between gap-2 text-[11px]">
+                          <span className="shrink-0 text-muted">
+                            {metric.label}
+                          </span>
+                          <span
+                            className={`min-w-0 truncate text-right ${
+                              over
+                                ? "font-medium text-accent"
+                                : "text-foreground"
+                            }`}
+                          >
+                            {metric.planned}
+                            <span className="text-muted">
+                              {" "}
+                              / {metric.target}
+                              {metric.unit}
+                            </span>
+                            {over ? (
+                              <span className="text-accent"> · over</span>
+                            ) : null}
+                          </span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-card-strong/60">
+                          <div
+                            className={`h-full rounded-full ${
+                              over ? "bg-accent/90" : "bg-accent"
+                            }`}
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {routineMeals.map((meal) => {
+                  const apiEntry = dailyDietLookup[meal];
+                  const fallbackEntry = dailyRoutineMeals[meal];
+
+                  if (!apiEntry && !fallbackEntry) {
+                    return (
+                      <div
+                        key={meal}
+                        className="soft-tile flex items-center justify-between gap-2 px-3 py-2.5"
+                      >
+                        <span className="text-xs text-muted">{meal}</span>
+                        <span className="text-xs text-muted">—</span>
+                      </div>
+                    );
+                  }
+
+                  const title = apiEntry
+                    ? apiEntry.recipe.title
+                    : fallbackEntry?.title;
+                  const meta = apiEntry
+                    ? `${apiEntry.adjustedCalories} kcal · ${apiEntry.adjustedProteinG}g P`
+                    : `${fallbackEntry?.timeMinutes} min · ${fallbackEntry?.protein}`;
+
+                  return (
+                    <button
+                      key={meal}
+                      type="button"
+                      onClick={() =>
+                        setSelectedRecipe(
+                          apiEntry
+                            ? apiEntry.recipe
+                            : (fallbackEntry as Recipe),
+                        )
+                      }
+                      className="soft-tile openable flex w-full items-start gap-2 px-3 py-2.5 text-left transition hover:bg-card-strong/55"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] uppercase tracking-wide text-muted">
+                          {meal}
+                        </div>
+                        <div className="mt-0.5 line-clamp-2 text-sm text-foreground">
+                          {title}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-muted">
+                          {meta}
+                        </div>
+                      </div>
+                      <OpenHint kind="open" className="mt-0.5 shrink-0" />
+                    </button>
+                  );
+                })}
+              </div>
+            </GlassCard>
+          </motion.div>
+        ) : null}
+
+        <motion.div variants={item}>
+          <GlassCard className="grid gap-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <TypeTitle>Browse</TypeTitle>
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((open) => !open)}
+                className={`soft-chip gap-1 text-[11px] ${
+                  selectedTags.length > 0
+                    ? "text-accent"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Filters
+                {selectedTags.length > 0 ? ` · ${selectedTags.length}` : ""}
+                <OpenHint kind="expand" />
+              </button>
+            </div>
+
+            <input
+              type="search"
+              placeholder="Search recipes…"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              className="soft-tile w-full px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted"
+            />
+
+            <div className="grid grid-cols-4 gap-1 rounded-xl bg-card-strong/40 p-1">
+              {mealTabs.map((tab) => {
+                const active = selectedTab === tab;
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setSelectedTab(tab)}
+                    className={`rounded-lg px-1 py-2 text-center transition ${
+                      active
+                        ? "bg-accent/15 text-accent"
+                        : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    <div className="text-[10px] font-semibold sm:text-[11px]">
+                      {tab}
+                    </div>
+                    <div
+                      className={`text-[9px] ${
+                        active ? "text-accent/80" : "text-muted"
+                      }`}
+                    >
+                      {recipesByMeal[tab].length}
+                    </div>
                   </button>
                 );
               })}
             </div>
+
+            {filtersOpen ? (
+              <div className="grid gap-2 border-t border-border/40 pt-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {allTags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => toggleTag(tag)}
+                      className={`soft-chip text-[10px] transition ${
+                        selectedTags.includes(tag)
+                          ? "bg-accent/15 text-accent"
+                          : "text-muted"
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+                {searchQuery || selectedTags.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setSelectedTags([]);
+                    }}
+                    className="self-start text-[11px] text-muted hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </GlassCard>
         </motion.div>
 
-        {favorites.length > 0 && (
+        {favorites.length > 0 ? (
           <motion.div variants={item}>
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-foreground">
+            <div className="grid gap-1.5">
+              <div className="flex items-center justify-between px-0.5">
+                <div className="text-xs font-semibold text-foreground">
                   Favorites
                 </div>
-                <div className="text-xs text-muted">{favorites.length} saved</div>
+                <div className="text-[11px] text-muted">{favorites.length}</div>
               </div>
-              <div className="grid gap-2 xs:gap-3 sm:grid-cols-2">
+              <DataList>
                 {recipes
                   .filter((entry) => favorites.includes(entry.id))
                   .map((entry) => (
-                    <RecipeCard
-                      key={entry.id}
+                    <RecipeRow
+                      key={`fav-${entry.id}`}
                       recipe={entry}
                       isFavorite
                       onToggleFavorite={toggleFavorite}
                       onOpenRecipe={setSelectedRecipe}
                     />
                   ))}
-              </div>
+              </DataList>
             </div>
           </motion.div>
-        )}
+        ) : null}
 
         <motion.div variants={item}>
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-foreground">{selectedTab}</div>
-              <div className="text-xs text-muted">{activeRecipes.length} recipes</div>
+          <div className="grid gap-1.5">
+            <div className="flex items-center justify-between px-0.5">
+              <div className="text-xs font-semibold text-foreground">
+                {selectedTab}
+              </div>
+              <div className="text-[11px] text-muted">
+                {activeRecipes.length}
+              </div>
             </div>
 
             {activeRecipes.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-card px-4 py-8 text-center text-sm text-muted">
-                No recipes found. Try adjusting your filters.
+              <div className="py-8 text-center text-xs text-muted">
+                No recipes match. Clear filters or try another meal.
               </div>
             ) : (
-              <div className="grid gap-2 xs:gap-3 sm:grid-cols-2">
+              <DataList>
                 {activeRecipes.map((entry) => (
-                  <RecipeCard
+                  <RecipeRow
                     key={entry.id}
                     recipe={entry}
                     isFavorite={favorites.includes(entry.id)}
@@ -1238,27 +1294,30 @@ export default function RecipesClient() {
                     onOpenRecipe={setSelectedRecipe}
                   />
                 ))}
-              </div>
+              </DataList>
             )}
           </div>
         </motion.div>
+          </motion.div>
+        )}
+
       </motion.div>
 
       <AnimatePresence>
-        {selectedRecipe && (
+        {selectedRecipe ? (
           <RecipeModal
             recipe={selectedRecipe}
             isFavorite={favorites.includes(selectedRecipe.id)}
             onToggleFavorite={toggleFavorite}
             onClose={() => setSelectedRecipe(null)}
           />
-        )}
+        ) : null}
       </AnimatePresence>
     </>
   );
 }
 
-function RecipeCard({
+function RecipeRow({
   recipe,
   isFavorite,
   onToggleFavorite,
@@ -1270,67 +1329,32 @@ function RecipeCard({
   onOpenRecipe: (recipe: Recipe) => void;
 }) {
   return (
-    <div className="group relative h-full rounded-2xl border border-border bg-card px-4 py-4 text-sm transition hover:-translate-y-0.5 hover:border-accent/40">
+    <DataRow className="items-center gap-2">
       <button
+        type="button"
         onClick={() => onOpenRecipe(recipe)}
-        className="grid h-full w-full gap-2 text-left"
+        className="openable min-w-0 flex-1 text-left"
+        aria-label={`Open ${recipe.title}`}
       >
-        <div className="text-xs text-muted">
-          {recipe.protein} protein • {recipe.timeMinutes} min
+        <TypeHeading className="truncate">{recipe.title}</TypeHeading>
+        <div className="type-meta mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
+          <span>{recipe.nutrition.calories} kcal</span>
+          <span>{recipe.nutrition.protein_g}g P</span>
+          <span>{recipe.timeMinutes} min</span>
         </div>
-        <div className="line-clamp-2 text-sm font-semibold text-foreground">{recipe.title}</div>
-        <div className="line-clamp-2 text-xs text-muted">{recipe.description}</div>
-        <div className="flex flex-wrap gap-1">
-          {recipe.tags.slice(0, 3).map((tag) => (
-            <span
-              key={tag}
-              className="rounded-full bg-accent/10 px-2 py-0.5 text-[9px] text-accent"
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-[10px] xs:grid-cols-3">
-          <div>
-            <div className="text-muted">Calories</div>
-            <div className="font-semibold text-foreground">{recipe.nutrition.calories}</div>
-          </div>
-          <div>
-            <div className="text-muted">Carbs</div>
-            <div className="font-semibold text-foreground">{recipe.nutrition.carbs_g}g</div>
-          </div>
-          <div>
-            <div className="text-muted">Fat</div>
-            <div className="font-semibold text-foreground">{recipe.nutrition.fat_g}g</div>
-          </div>
-        </div>
-        <div className="mt-1 text-[10px] text-accent">View recipe</div>
       </button>
-
       <button
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleFavorite(recipe.id);
-        }}
-        className="absolute right-2 top-2 rounded-full p-2"
+        type="button"
+        onClick={() => onToggleFavorite(recipe.id)}
+        className="soft-chip shrink-0 px-2 py-1 text-[11px]"
         aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
       >
-        {isFavorite ? (
-          <svg className="h-4 w-4 text-accent" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" />
-          </svg>
-        ) : (
-          <svg className="h-4 w-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-            />
-          </svg>
-        )}
+        <span className={isFavorite ? "text-accent" : "text-muted"}>
+          {isFavorite ? "Saved" : "Save"}
+        </span>
       </button>
-    </div>
+      <OpenHint kind="open" />
+    </DataRow>
   );
 }
 
@@ -1346,10 +1370,30 @@ function RecipeModal({
   onClose: () => void;
 }) {
   const n = recipe.nutrition;
+  const [showMore, setShowMore] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  return (
+  useOverlayLock(true);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  if (!mounted) {
+    return null;
+  }
+
+  return createPortal(
     <motion.div
-      className="mx-auto fixed inset-0 z-50 bg-black/35 backdrop-blur-[50px]"
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-[var(--scrim)] p-3 sm:items-center sm:p-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -1357,107 +1401,120 @@ function RecipeModal({
       onClick={onClose}
     >
       <motion.div
-        className="mx-auto h-dvh w-full max-w-4xl p-1 xs:p-1.5 sm:p-2 md:h-[92vh] md:py-5"
-        initial={{ y: 34, opacity: 0.96 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 26, opacity: 0 }}
-        transition={{ type: "spring", damping: 26, stiffness: 290, mass: 0.6 }}
+        className="glass-card flex max-h-[min(92vh,720px)] w-full max-w-md flex-col overflow-hidden p-0"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 12 }}
+        transition={{ duration: 0.2 }}
         onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={recipe.title}
       >
-        <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-border bg-(--surface) shadow-xl will-change-transform">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-2 xs:px-3 py-2 xs:py-3 sm:px-4">
-            <div className="text-[11px] xs:text-xs text-muted">{recipe.meal}</div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => onToggleFavorite(recipe.id)}
-                className="rounded-full border border-border px-2 xs:px-3 py-1 xs:py-1.5 text-[11px] xs:text-xs text-muted"
-              >
-                {isFavorite ? "Saved" : "Save"}
-              </button>
-              <button
-                onClick={onClose}
-                className="rounded-full border border-border px-2 xs:px-3 py-1 xs:py-1.5 text-[11px] xs:text-xs text-muted"
-              >
-                Close
-              </button>
+        <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3">
+          <div className="min-w-0">
+            <div className="type-kicker">
+              {recipe.meal} · {recipe.timeMinutes} min
             </div>
+            <h3 className="type-title mt-0.5 leading-snug">{recipe.title}</h3>
           </div>
+          <div className="flex shrink-0 gap-1">
+            <button
+              type="button"
+              onClick={() => onToggleFavorite(recipe.id)}
+              className={`soft-chip px-2.5 py-1 text-[11px] ${
+                isFavorite ? "text-accent" : "text-muted"
+              }`}
+            >
+              {isFavorite ? "Saved" : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="soft-chip px-2.5 py-1 text-[11px] text-muted"
+            >
+              Close
+            </button>
+          </div>
+        </div>
 
-          <div className="overflow-y-auto px-2 xs:px-3 pb-8 pt-2 xs:pt-3 sm:px-4 [scrollbar-width:thin] [scrollbar-color:rgb(var(--color-accent))_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-accent/40">
-            <div className="grid gap-3 xs:gap-4">
-              <div>
-                <h3 className="text-base xs:text-lg font-semibold text-foreground">{recipe.title}</h3>
-                <p className="mt-0.5 xs:mt-1 text-[11px] xs:text-xs text-muted">{recipe.description}</p>
-              </div>
+        <div className="themed-scroll overflow-y-auto px-4 pb-5">
+          <div className="grid gap-4">
+            <StatStrip cols={4}>
+              <StatCell label="Cal" value={n.calories} />
+              <StatCell label="Protein" value={`${n.protein_g}g`} />
+              <StatCell label="Carbs" value={`${n.carbs_g}g`} />
+              <StatCell label="Fat" value={`${n.fat_g}g`} />
+            </StatStrip>
 
-              <div className="grid grid-cols-2 gap-1 xs:gap-2 sm:grid-cols-3">
-                <div className="rounded-2xl border border-border bg-card px-2 xs:px-3 py-2">
-                  <div className="text-[9px] xs:text-[10px] text-muted">Time</div>
-                  <div className="text-xs font-semibold text-foreground">{recipe.timeMinutes} min</div>
-                </div>
-                <div className="rounded-2xl border border-border bg-card px-2 xs:px-3 py-2">
-                  <div className="text-[9px] xs:text-[10px] text-muted">Protein</div>
-                  <div className="text-xs font-semibold text-foreground">{recipe.protein}</div>
-                </div>
-                <div className="rounded-2xl border border-border bg-card px-2 xs:px-3 py-2">
-                  <div className="text-[9px] xs:text-[10px] text-muted">Serving</div>
-                  <div className="text-xs font-semibold text-foreground">{recipe.serving}</div>
-                </div>
-              </div>
+            <section className="grid gap-1.5">
+              <div className="type-kicker">Ingredients</div>
+              <ul className="grid gap-1">
+                {recipe.ingredients.map((ingredient) => (
+                  <li key={ingredient} className="text-sm text-foreground/90">
+                    {ingredient}
+                  </li>
+                ))}
+              </ul>
+            </section>
 
-              <div className="rounded-2xl border border-border bg-card p-2 xs:p-3">
-                <div className="text-sm font-semibold text-foreground">Nutrition Facts</div>
-                <div className="mt-2 grid gap-1 text-[11px] xs:text-xs text-muted">
-                  <div className="flex justify-between border-b border-border pb-1">
-                    <span className="font-semibold text-foreground">Calories</span>
-                    <span className="font-semibold text-foreground">{n.calories} kcal</span>
+            <section className="grid gap-1.5">
+              <div className="type-kicker">Steps</div>
+              <ol className="grid gap-2">
+                {recipe.steps.map((step, index) => (
+                  <li key={step} className="flex gap-2 text-sm text-foreground/90">
+                    <span className="w-4 shrink-0 text-muted">{index + 1}</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+
+            <div className="border-t border-border/40 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowMore((open) => !open)}
+                className="openable flex w-full items-center justify-between gap-2 text-left text-[11px] text-muted hover:text-foreground"
+              >
+                <span>More details</span>
+                <OpenHint kind="expand" />
+              </button>
+
+              {showMore ? (
+                <div className="mt-3 grid gap-3">
+                  <p className="text-xs text-muted">{recipe.description}</p>
+
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted">
+                    {(
+                      [
+                        ["Fiber", `${n.fiber_g}g`],
+                        ["Sugar", `${n.sugar_g}g`],
+                        ["Sodium", `${n.sodium_mg}mg`],
+                        ["Iron", `${n.iron_mg}mg`],
+                        ["Calcium", `${n.calcium_mg}mg`],
+                        ["Potassium", `${n.potassium_mg}mg`],
+                        ["Vit C", `${n.vitaminC_mg}mg`],
+                        ["Vit D", `${n.vitaminD_mcg}mcg`],
+                      ] as const
+                    ).map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="flex justify-between gap-2 border-b border-border/30 py-1"
+                      >
+                        <span>{label}</span>
+                        <span className="text-foreground">{value}</span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex justify-between"><span>Protein</span><span>{n.protein_g} g</span></div>
-                  <div className="flex justify-between"><span>Carbs</span><span>{n.carbs_g} g</span></div>
-                  <div className="flex justify-between"><span>Fat</span><span>{n.fat_g} g</span></div>
-                  <div className="flex justify-between"><span>Fiber</span><span>{n.fiber_g} g</span></div>
-                  <div className="flex justify-between"><span>Sugar</span><span>{n.sugar_g} g</span></div>
-                  <div className="flex justify-between"><span>Sodium</span><span>{n.sodium_mg} mg</span></div>
-                  <div className="flex justify-between"><span>Cholesterol</span><span>{n.cholesterol_mg} mg</span></div>
-                  <div className="flex justify-between"><span>Iron</span><span>{n.iron_mg} mg</span></div>
-                  <div className="flex justify-between"><span>Calcium</span><span>{n.calcium_mg} mg</span></div>
-                  <div className="flex justify-between"><span>Potassium</span><span>{n.potassium_mg} mg</span></div>
-                  <div className="flex justify-between"><span>Magnesium</span><span>{n.magnesium_mg} mg</span></div>
-                  <div className="flex justify-between"><span>Vitamin A</span><span>{n.vitaminA_mcg} mcg</span></div>
-                  <div className="flex justify-between"><span>Vitamin C</span><span>{n.vitaminC_mg} mg</span></div>
-                  <div className="flex justify-between"><span>Vitamin D</span><span>{n.vitaminD_mcg} mcg</span></div>
+
+                  <p className="text-xs text-muted">{recipe.benefits}</p>
                 </div>
-              </div>
-
-              <div>
-                <div className="text-sm font-semibold text-foreground">Ingredients</div>
-                <ul className="mt-2 grid gap-2">
-                  {recipe.ingredients.map((ingredient) => (
-                    <li key={ingredient} className="text-xs text-muted">• {ingredient}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div>
-                <div className="text-sm font-semibold text-foreground">Steps</div>
-                <ol className="mt-2 grid gap-2">
-                  {recipe.steps.map((step, index) => (
-                    <li key={step} className="text-xs text-muted">{index + 1}. {step}</li>
-                  ))}
-                </ol>
-              </div>
-
-              <div className="rounded-2xl border border-border bg-card px-3 py-2 text-xs text-muted">
-                <span className="font-semibold text-foreground">Benefits: </span>
-                {recipe.benefits}
-              </div>
+              ) : null}
             </div>
           </div>
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   );
 }
-
-
-

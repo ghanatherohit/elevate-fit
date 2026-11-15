@@ -10,6 +10,7 @@ import {
   FiTrendingUp,
 } from "react-icons/fi";
 import { CgGym } from "react-icons/cg";
+import { useOverlayLocked } from "@/components/shared/OverlayLock";
 
 
 const navItems = [
@@ -83,6 +84,7 @@ const isActiveRoute = (pathname: string, key: string) => {
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const overlayLocked = useOverlayLocked();
 
   if (
     pathname?.startsWith("/auth") ||
@@ -93,9 +95,16 @@ export default function BottomNav() {
   }
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-20">
+    <nav
+      className={`fixed bottom-0 left-0 right-0 z-20 transition duration-200 ${
+        overlayLocked
+          ? "pointer-events-none translate-y-full opacity-0"
+          : "translate-y-0 opacity-100"
+      }`}
+      aria-hidden={overlayLocked}
+    >
       <div className="mx-auto max-w-md px-5 pb-6">
-        <div className="glass-card flex items-center justify-between rounded-3xl px-5 py-3">
+        <div className="glass-card flex items-center justify-between px-5 py-3">
           {navItems.map((item) => {
             const isActive = isActiveRoute(pathname ?? "", item.key);
             const Icon = item.icon;
@@ -103,6 +112,8 @@ export default function BottomNav() {
               <Link
                 key={item.key}
                 href={item.href}
+                tabIndex={overlayLocked ? -1 : undefined}
+                aria-current={isActive ? "page" : undefined}
                 className={`flex flex-col items-center gap-1 text-[10px] font-medium transition-colors duration-200 ${
                   isActive
                     ? "text-foreground"

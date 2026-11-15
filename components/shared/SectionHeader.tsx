@@ -10,21 +10,21 @@ export default function SectionHeader({
   onAction,
 }: SectionHeaderProps) {
   return (
-    <div className="flex items-center justify-between">
-      <h2 className="font-display text-base font-semibold tracking-wide text-foreground">
-        {title}
-      </h2>
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="type-title">{title}</h2>
       {action ? (
-        <button
-          className="text-xs font-medium text-muted"
-          onClick={onAction}
-          type="button"
-        >
-          {action}
-        </button>
+        onAction ? (
+          <button
+            className="soft-chip type-meta"
+            onClick={onAction}
+            type="button"
+          >
+            {action}
+          </button>
+        ) : (
+          <span className="type-meta">{action}</span>
+        )
       ) : null}
     </div>
   );
 }
-
-

@@ -64,7 +64,7 @@ export default function RoutineEditor({
           type="time"
           value={time}
           onChange={(event) => setTime(event.target.value)}
-          className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+          className="rounded-2xl bg-card-strong/40 px-4 py-3 text-sm text-foreground outline-none"
         />
       </div>
       <div className="grid gap-2">
@@ -72,7 +72,7 @@ export default function RoutineEditor({
         <input
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+          className="rounded-2xl bg-card-strong/40 px-4 py-3 text-sm text-foreground outline-none"
         />
       </div>
       <div className="grid gap-2">
@@ -81,7 +81,7 @@ export default function RoutineEditor({
           value={notes}
           onChange={(event) => setNotes(event.target.value)}
           rows={3}
-          className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+          className="rounded-2xl bg-card-strong/40 px-4 py-3 text-sm text-foreground outline-none"
         />
       </div>
       <div className="grid gap-2">
@@ -89,10 +89,10 @@ export default function RoutineEditor({
         <input
           value={alarmLabel}
           onChange={(event) => setAlarmLabel(event.target.value)}
-          className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+          className="rounded-2xl bg-card-strong/40 px-4 py-3 text-sm text-foreground outline-none"
         />
       </div>
-      <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3">
+      <div className="data-row px-1">
         <div>
           <div className="text-sm text-foreground">Notifications</div>
           <div className="text-xs text-muted">
@@ -115,7 +115,7 @@ export default function RoutineEditor({
             setType(nextType);
             setTargetId("");
           }}
-          className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+          className="rounded-2xl bg-card-strong/40 px-4 py-3 text-sm text-foreground outline-none"
         >
           <option value="general">General</option>
           <option value="recipe">Recipe</option>
@@ -130,7 +130,7 @@ export default function RoutineEditor({
           <select
             value={targetId}
             onChange={(event) => setTargetId(event.target.value)}
-            className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+            className="rounded-2xl bg-card-strong/40 px-4 py-3 text-sm text-foreground outline-none"
           >
             <option value="">Select</option>
             {targets.map((entry) => (
