@@ -53,7 +53,7 @@ See [`.env.example`](.env.example). Important names used by code:
 
 - `FIREBASE_SERVICE_ACCOUNT` — minified service-account JSON (not split admin vars)
 - `VAPID_SUBJECT` — e.g. `mailto:you@example.com` (not `VAPID_EMAIL`)
-- `CRON_SECRET` — bearer token for `/api/cron/reminders` (Vercel Cron every 5 minutes via [`vercel.json`](vercel.json))
+- `CRON_SECRET` — bearer token for `/api/cron/reminders` (Vercel Cron once daily at 03:00 UTC via [`vercel.json`](vercel.json); Hobby-compatible — use Pro or an external caller for denser schedules)
 - Optional: `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` for distributed rate limits
 - Optional: `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` (install `@sentry/nextjs` to activate)
 
