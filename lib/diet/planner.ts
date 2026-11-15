@@ -1,4 +1,5 @@
 import { recipes, type Recipe } from "@/lib/data/recipes";
+import { shiftDateKey, toIstDateKey } from "@/lib/datetime/ist";
 
 export type Sex = "male" | "female";
 export type ActivityLevel =
@@ -67,12 +68,7 @@ const mealDistribution = {
   Dinner: 0.35,
 } as const;
 
-const formatDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const formatDateKey = (date: Date) => toIstDateKey(date);
 
 const hashString = (value: string) => {
   let hash = 0;
@@ -167,9 +163,7 @@ const pickRecipeForMeal = (
 
 export const buildDailyDietPlan = (targets: DietTargets, date = new Date()) => {
   const todayKey = formatDateKey(date);
-  const yesterday = new Date(date);
-  yesterday.setDate(date.getDate() - 1);
-  const yesterdayKey = formatDateKey(yesterday);
+  const yesterdayKey = shiftDateKey(todayKey, -1);
 
   const meals = (["Breakfast", "Lunch", "Dinner"] as const)
     .map((meal) => pickRecipeForMeal(meal, targets, todayKey, yesterdayKey))

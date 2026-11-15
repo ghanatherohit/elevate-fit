@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OpenHint } from "@/components/shared/DataSurfaces";
 
 type RoutineItemProps = {
   time: string;
@@ -26,21 +27,25 @@ export default function RoutineItem({
   lockLabel,
 }: RoutineItemProps) {
   const timeLabel = endTime && endTime !== time ? `${time} - ${endTime}` : time;
+  const canOpen = Boolean(href || onOpen);
 
   const content = (
     <div
-      className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
-        highlight
-          ? "border-accent/40 bg-card-strong"
-          : "border-border bg-card"
-      }`}
+      className={`data-row px-2 py-2.5 sm:px-3 sm:py-3 ${canOpen ? "openable group" : ""} ${
+        highlight ? "bg-accent/10" : ""
+      } ${checked ? "opacity-70" : ""}`}
     >
-      <div className="flex flex-col">
-        <span className="text-xs text-muted">{timeLabel}</span>
-        <span className="text-sm font-semibold text-foreground">
+      <div className="flex min-w-0 flex-col">
+        <span className="text-[11px] text-muted sm:text-xs">{timeLabel}</span>
+        <span
+          className={`text-sm font-semibold ${
+            checked ? "text-muted line-through" : "text-foreground"
+          }`}
+        >
           {title}
         </span>
       </div>
+      {canOpen ? <OpenHint kind="open" /> : null}
     </div>
   );
 

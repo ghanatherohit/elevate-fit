@@ -3,9 +3,20 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RoutineItem from "./RoutineItem";
+import GlassCard from "@/components/shared/GlassCard";
+import { OpenHint } from "@/components/shared/DataSurfaces";
+import OverlaySheet from "@/components/shared/OverlaySheet";
 import { routineItems, type RoutineItem as RoutineItemType } from "@/lib/data/routines";
 import { recipes } from "@/lib/data/recipes";
 import { workouts } from "@/lib/data/workouts";
+import {
+  dateFromDateKey,
+  getIstDayName,
+  getIstMinutesOfDay,
+  getMondayStartFromDate,
+  toIstDateKey,
+  type WeekdayName,
+} from "@/lib/datetime/ist";
 
 type RoutineType = RoutineItemType["type"];
 
@@ -55,7 +66,7 @@ type TasksByDay = {
   sunday: RoutineItemType[];
 };
 
-type DayName = keyof TasksByDay;
+type DayName = WeekdayName;
 
 type DayPlanEntry = {
   date: Date;
@@ -113,37 +124,7 @@ const normalizeTasksByDay = (tasksByDay?: Partial<TasksByDay> | null): TasksByDa
   sunday: tasksByDay?.sunday ?? [],
 });
 
-// Get day of week from year, month (0-11), date using Zeller's congruence
-const getDayOfWeekIST = (year: number, month: number, day: number): DayName => {
-  const adjustedMonth = month < 2 ? month + 12 : month;
-  const adjustedYear = month < 2 ? year - 1 : year;
-  
-  const dayOfWeek = (day + Math.floor((13 * (adjustedMonth + 1)) / 5) + adjustedYear + Math.floor(adjustedYear / 4) - Math.floor(adjustedYear / 100) + Math.floor(adjustedYear / 400)) % 7;
-  
-  // dayOfWeek: 0=Saturday, 1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday
-  const dayNames_sorted = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday", "friday"] as DayName[];
-  return dayNames_sorted[dayOfWeek];
-};
-
-// Get day name in IST timezone
-const getDayName = (date: Date): DayName => {
-  const utcDate = date.getUTCDate();
-  const utcMonth = date.getUTCMonth();
-  const utcYear = date.getUTCFullYear();
-  const utcHours = date.getUTCHours();
-  
-  // IST is UTC+5:30
-  let istDate = utcDate;
-  let istMonth = utcMonth;
-  let istYear = utcYear;
-  let istHours = (utcHours + 5) % 24;
-  
-  if (utcHours + 5 >= 24) {
-    istDate += 1;
-  }
-  
-  return getDayOfWeekIST(istYear, istMonth, istDate);
-};
+const getDayName = (date: Date): DayName => getIstDayName(date);
 
 const addTaskToDay = (tasksByDay: TasksByDay, dayName: DayName, task: RoutineItemType) => {
   const nextDayItems = [...tasksByDay[dayName], task].sort(
@@ -178,46 +159,13 @@ const parseTimeToMinutes = (value: string) => {
   return hours * 60 + Number(minutesText);
 };
 
-const getNowMinutes = () => {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
-};
+const getNowMinutes = () => getIstMinutesOfDay();
 
-const toDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const toDateKey = (date: Date) => toIstDateKey(date);
 
-const parseDateKey = (value: string) => {
-  const [yearText, monthText, dayText] = value.split("-");
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
+const parseDateKey = (value: string) => dateFromDateKey(value);
 
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-    return null;
-  }
-
-  const date = new Date(year, month - 1, day);
-  date.setHours(0, 0, 0, 0);
-  return date;
-};
-
-const getMondayStart = (date: Date) => {
-  // Get day of week in IST timezone
-  const dayName = getDayName(date);
-  const dayIndex = dayNames.indexOf(dayName);
-  
-  // Monday is at index 1, calculate days to go back
-  const daysToMonday = (dayIndex === 0 ? 6 : dayIndex - 1); // Sunday->6, Monday->0, Tuesday->1, etc.
-  
-  const monday = new Date(date);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(date.getDate() - daysToMonday);
-  return monday;
-};
+const getMondayStart = (date: Date) => getMondayStartFromDate(date);
 
 const buildDayPlan = (dates: Date[], tasksByDay: TasksByDay): DayPlanEntry[] => {
   return dates.map((date) => {
@@ -486,13 +434,15 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
     [],
   );
 
+  // Anchor "today" to the IST calendar day, not the browser's local midnight.
+  const todayKey = useMemo(() => toIstDateKey(), []);
   const today = useMemo(() => {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    return date;
-  }, []);
-
-  const todayKey = useMemo(() => toDateKey(today), [today]);
+    return dateFromDateKey(todayKey) ?? (() => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      return date;
+    })();
+  }, [todayKey]);
   const trackingStartDate = useMemo(() => {
     return weeklyTrackingStartDate ? parseDateKey(weeklyTrackingStartDate) : null;
   }, [weeklyTrackingStartDate]);
@@ -854,6 +804,20 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
 
     const nextProgress = { ...parsed, [dateKey]: next };
     localStorage.setItem(progressKey, JSON.stringify(nextProgress));
+
+    // Persist to server so Progress page and dashboard stay in sync.
+    void fetch("/api/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        date: dateKey,
+        tasksDone: next.tasksDone,
+        tasksTotal: next.tasksTotal,
+        routineDone: next.routineDone,
+        workoutDone: next.workoutDone,
+        water: next.water,
+      }),
+    });
   };
 
   const persistRoutineTasks = useCallback(async (nextTasksByDay: TasksByDay) => {
@@ -1020,160 +984,47 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
   };
 
   const handleNavigateNext = () => {
-    const canNavigateNext = viewMode === "week" ? weekOffset < 0 : monthOffset < 0;
-    if (!canNavigateNext) {
+    const canGoNext = viewMode === "week" ? weekOffset < 0 : monthOffset < 0;
+    if (!canGoNext) {
       return;
     }
-
     if (viewMode === "week") {
       setWeekOffset((prev) => prev + 1);
       return;
     }
-
     setMonthOffset((prev) => prev + 1);
   };
 
   const canNavigateNext = viewMode === "week" ? weekOffset < 0 : monthOffset < 0;
 
+  const selectedDone = selectedDayPlan
+    ? Object.values(completionByDate[selectedDayPlan.dateKey] ?? {}).filter(Boolean).length
+    : 0;
+  const selectedTotal = selectedDayPlan?.items.length ?? 0;
+  const selectedPercent =
+    selectedTotal > 0 ? Math.round((selectedDone / selectedTotal) * 100) : 0;
+
   return (
     <div className="grid gap-4">
-      <button
-        className="rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground"
-        onClick={() => setShowForm((prev) => !prev)}
-      >
-        {showForm ? "Hide" : "Add new routine item"}
-      </button>
-
-      {showForm ? (
-        <div className="grid gap-3 rounded-2xl border border-border bg-card p-4">
-          <div className="grid gap-2">
-            <label className="text-xs text-muted">Time</label>
-            <input
-              type="time"
-              value={form.time}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, time: event.target.value }))
-              }
-              className="rounded-2xl border border-border bg-card-strong px-4 py-3 text-sm text-foreground"
-            />
-          </div>
-          <div className="grid gap-2">
-            <label className="text-xs text-muted">End time</label>
-            <input
-              type="time"
-              value={form.endTime}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, endTime: event.target.value }))
-              }
-              className="rounded-2xl border border-border bg-card-strong px-4 py-3 text-sm text-foreground"
-            />
-          </div>
-          <div className="grid gap-2">
-            <label className="text-xs text-muted">Title</label>
-            <input
-              value={form.title}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, title: event.target.value }))
-              }
-              className="rounded-2xl border border-border bg-card-strong px-4 py-3 text-sm text-foreground"
-            />
-          </div>
-          <div className="grid gap-2">
-            <label className="text-xs text-muted">Attach to</label>
-            <select
-              value={form.type}
-              onChange={(event) => {
-                const nextType = event.target.value as RoutineType;
-                setForm((prev) => ({ ...prev, type: nextType, targetId: "" }));
-              }}
-              className="rounded-2xl border border-border bg-card-strong px-4 py-3 text-sm text-foreground"
-            >
-              <option value="general">General</option>
-              <option value="recipe">Recipe</option>
-              <option value="workout">Workout</option>
-            </select>
-          </div>
-          {form.type !== "general" ? (
-            <div className="grid gap-2">
-              <label className="text-xs text-muted">
-                {form.type === "recipe" ? "Recipe" : "Workout"}
-              </label>
-              <select
-                value={form.targetId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, targetId: event.target.value }))
-                }
-                className="rounded-2xl border border-border bg-card-strong px-4 py-3 text-sm text-foreground"
-              >
-                <option value="">Select</option>
-                {targets.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-          <button
-            className="rounded-2xl bg-accent/15 px-4 py-3 text-sm font-semibold text-accent"
-            onClick={handleSave}
-          >
-            Add to routine
-          </button>
-        </div>
-      ) : null}
-
-      <div className="grid gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-3 py-2">
-          <div className="grid gap-1">
-            <div className="text-xs font-medium text-foreground">
-              7-day progress tracking
-            </div>
-            <div className="text-[11px] text-muted">
-              {weeklyTrackingConsent
-                ? "Enabled. This cannot be turned off from this tab."
-                : "Turn on to save weekly consistency progress."}
+      <GlassCard className="grid gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-xs text-muted">Calendar</div>
+            <div className="text-sm font-semibold text-foreground">
+              {viewMode === "week" ? weekRangeLabel : monthLabel}
             </div>
           </div>
-
-          <button
-            onClick={() => {
-              if (weeklyTrackingConsent) {
-                return;
-              }
-              void handleWeeklyTrackingDecision(true);
-            }}
-            disabled={weeklyTrackingConsent === null || weeklyTrackingConsent}
-            aria-pressed={weeklyTrackingConsent === true}
-            className={`relative h-7 w-14 rounded-full border transition ${
-              weeklyTrackingConsent
-                ? "border-accent/40 bg-accent/25"
-                : "border-border bg-card-strong"
-            } ${weeklyTrackingConsent === null ? "opacity-50" : ""}`}
-          >
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-foreground transition ${
-                weeklyTrackingConsent ? "right-0.5" : "left-0.5"
-              }`}
-            />
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleNavigatePrevious}
-              className="rounded-xl border border-border bg-card-strong px-2 py-1 text-sm text-foreground"
+              className="soft-chip px-2.5 py-1.5 text-sm text-foreground"
               aria-label={viewMode === "week" ? "Previous week" : "Previous month"}
             >
               ←
             </button>
-            <div className="text-xs font-medium text-muted">
-              {viewMode === "week" ? weekRangeLabel : monthLabel}
-            </div>
             <button
               onClick={handleNavigateNext}
-              className={`rounded-xl border border-border bg-card-strong px-2 py-1 text-sm text-foreground ${
+              className={`soft-chip px-2.5 py-1.5 text-sm text-foreground ${
                 canNavigateNext ? "" : "cursor-not-allowed opacity-50"
               }`}
               aria-label={viewMode === "week" ? "Next week" : "Next month"}
@@ -1181,29 +1032,24 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
             >
               →
             </button>
-          </div>
-
-          <div className="grid grid-cols-2 rounded-xl border border-border bg-card-strong p-1 text-xs">
-            <button
-              onClick={() => setViewMode("week")}
-              className={`rounded-lg px-3 py-1 ${
-                viewMode === "week"
-                  ? "bg-accent/15 text-accent"
-                  : "text-foreground"
-              }`}
-            >
-              Week
-            </button>
-            <button
-              onClick={() => setViewMode("month")}
-              className={`rounded-lg px-3 py-1 ${
-                viewMode === "month"
-                  ? "bg-accent/15 text-accent"
-                  : "text-foreground"
-              }`}
-            >
-              Month
-            </button>
+            <div className="grid grid-cols-2 rounded-xl bg-card-strong/50 p-1 text-xs">
+              <button
+                onClick={() => setViewMode("week")}
+                className={`rounded-lg px-3 py-1.5 ${
+                  viewMode === "week" ? "bg-accent/15 text-accent" : "text-muted"
+                }`}
+              >
+                Week
+              </button>
+              <button
+                onClick={() => setViewMode("month")}
+                className={`rounded-lg px-3 py-1.5 ${
+                  viewMode === "month" ? "bg-accent/15 text-accent" : "text-muted"
+                }`}
+              >
+                Month
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1215,13 +1061,17 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.22 }}
-              className="grid grid-cols-7 gap-2"
+              className="grid grid-cols-7 gap-1.5 sm:gap-2"
             >
-              {weekPlan.map(({ dateKey, date }) => {
+              {weekPlan.map(({ dateKey, date, items }) => {
                 const isActive = selectedDateKey === dateKey;
                 const isFuture = isFutureDate(date);
                 const isBeforeStart = isBeforeTrackingStartDate(dateKey);
                 const isLocked = isFuture || isBeforeStart;
+                const done = Object.values(completionByDate[dateKey] ?? {}).filter(Boolean)
+                  .length;
+                const total = items.length;
+                const isToday = dateKey === todayKey;
                 return (
                   <button
                     key={dateKey}
@@ -1237,16 +1087,36 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
                       handleSelectDate(dateKey);
                     }}
                     disabled={isLocked}
-                    className={`rounded-2xl border px-2 py-2 text-center text-[11px] ${
+                    className={`rounded-2xl px-1 py-2.5 text-center transition sm:px-2 ${
                       isActive
-                        ? "border-accent/40 bg-accent/15 text-accent"
-                        : "border-border bg-card text-muted"
-                    } ${isLocked ? "cursor-not-allowed opacity-50" : ""}`}
+                        ? "bg-accent/15 text-accent"
+                        : "bg-card-strong/35 text-muted hover:bg-card-strong/55 hover:text-foreground"
+                    } ${isLocked ? "cursor-not-allowed opacity-45" : ""}`}
                   >
-                    <div className="font-semibold">
+                    <div className="text-[10px] font-medium uppercase tracking-wide">
                       {date.toLocaleDateString(undefined, { weekday: "short" })}
                     </div>
-                    <div>{date.toLocaleDateString(undefined, { day: "2-digit" })}</div>
+                    <div
+                      className={`mt-1 text-sm font-semibold ${
+                        isActive || isToday ? "text-foreground" : ""
+                      }`}
+                    >
+                      {date.toLocaleDateString(undefined, { day: "2-digit" })}
+                    </div>
+                    <div className="mt-1.5 flex justify-center gap-0.5">
+                      {total === 0 ? (
+                        <span className="h-1 w-1 rounded-full bg-border" />
+                      ) : (
+                        Array.from({ length: Math.min(total, 4) }).map((_, i) => (
+                          <span
+                            key={i}
+                            className={`h-1 w-1 rounded-full ${
+                              i < done ? "bg-accent" : "bg-border"
+                            }`}
+                          />
+                        ))
+                      )}
+                    </div>
                   </button>
                 );
               })}
@@ -1260,7 +1130,7 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
               transition={{ duration: 0.22 }}
               className="grid gap-2"
             >
-              <div className="grid grid-cols-7 gap-2">
+              <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
                 {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
                   <div
                     key={label}
@@ -1271,7 +1141,7 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
                 ))}
               </div>
 
-              <div className="grid grid-cols-7 gap-2">
+              <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
                 {monthPlan.map(({ dateKey, date, items }) => {
                   const done = Object.values(completionByDate[dateKey] ?? {}).filter(Boolean).length;
                   const total = items.length;
@@ -1298,17 +1168,15 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
                         handleSelectDate(dateKey);
                       }}
                       disabled={isLocked}
-                      className={`rounded-2xl border px-2 py-3 text-center ${
+                      className={`rounded-2xl px-1 py-2.5 text-center transition sm:px-2 ${
                         isActive
-                          ? "border-accent/40 bg-accent/15"
-                          : "border-border bg-card"
-                      } ${isLocked ? "cursor-not-allowed opacity-50" : ""}`}
+                          ? "bg-accent/15"
+                          : "bg-card-strong/35 hover:bg-card-strong/55"
+                      } ${isLocked ? "cursor-not-allowed opacity-45" : ""}`}
                     >
                       <div
                         className={`text-sm font-semibold ${
-                          isCurrentMonth
-                            ? "text-foreground"
-                            : "text-muted"
+                          isCurrentMonth ? "text-foreground" : "text-muted"
                         }`}
                       >
                         {date.toLocaleDateString(undefined, { day: "2-digit" })}
@@ -1323,157 +1191,313 @@ export default function RoutineListClient({ onOpenItem }: RoutineListClientProps
             </motion.div>
           )}
         </AnimatePresence>
+      </GlassCard>
 
-        <AnimatePresence mode="wait">
-          {selectedDayPlan ? (
-            (() => {
-              const selectedDayIsFuture = isFutureDate(selectedDayPlan.date);
-              const selectedDayIsBeforeStart = isBeforeTrackingStartDate(
-                selectedDayPlan.dateKey,
-              );
-              const selectedDayIsToday = selectedDayPlan.dateKey === todayKey;
+      <AnimatePresence mode="wait">
+        {selectedDayPlan ? (
+          (() => {
+            const selectedDayIsFuture = isFutureDate(selectedDayPlan.date);
+            const selectedDayIsBeforeStart = isBeforeTrackingStartDate(
+              selectedDayPlan.dateKey,
+            );
+            const selectedDayIsToday = selectedDayPlan.dateKey === todayKey;
 
-              return (
-            <motion.div
-              key={selectedDayPlan.dateKey}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.22 }}
-              className="grid gap-3 rounded-2xl border border-border bg-card p-4"
-            >
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-foreground">
-                  {selectedDayPlan.date.toLocaleDateString(undefined, {
-                    weekday: "long",
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                  })}
+            return (
+              <motion.div
+                key={selectedDayPlan.dateKey}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.22 }}
+                className="glass-card grid gap-4 p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-sm font-semibold text-foreground">
+                        {selectedDayPlan.date.toLocaleDateString(undefined, {
+                          weekday: "long",
+                          day: "2-digit",
+                          month: "short",
+                        })}
+                      </div>
+                      {selectedDayIsToday ? (
+                        <span className="soft-chip bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-accent">
+                          Today
+                        </span>
+                      ) : null}
+                    </div>
+                    {!selectedDayIsFuture &&
+                    !selectedDayIsBeforeStart &&
+                    selectedTotal > 0 ? (
+                      <div className="mt-1 text-xs text-muted">
+                        {selectedDone} of {selectedTotal} done · {selectedPercent}%
+                      </div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="openable soft-chip gap-1 text-xs text-muted transition hover:text-foreground"
+                    onClick={() => setShowForm(true)}
+                  >
+                    Add task
+                    <OpenHint kind="open" />
+                  </button>
                 </div>
-                {toDateKey(new Date()) === selectedDayPlan.dateKey ? (
-                  <div className="rounded-full border border-accent/40 bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-accent">
-                    Today
+
+                {!selectedDayIsFuture &&
+                !selectedDayIsBeforeStart &&
+                selectedTotal > 0 ? (
+                  <div className="h-1.5 overflow-hidden rounded-full bg-card-strong/60">
+                    <div
+                      className="h-full rounded-full bg-accent transition-all duration-500"
+                      style={{ width: `${selectedPercent}%` }}
+                    />
                   </div>
                 ) : null}
-              </div>
 
-              {selectedDayIsFuture ? (
-                <div className="text-xs text-muted">
-                  Future dates are locked.
-                </div>
-              ) : selectedDayIsBeforeStart ? (
-                <div className="text-xs text-muted">
-                  {getTrackingStartLockMessage(selectedDayPlan.dateKey) ??
-                    "Tracking has not started yet for this date."}
-                </div>
-              ) : selectedDayPlan.items.length === 0 ? (
-                <div className="text-xs text-muted">No tasks</div>
-              ) : (
-                <div className="grid gap-3">
-                  {selectedDayPlan.items.map((item) => (
-                    <div
-                      key={`${selectedDayPlan.dateKey}-${item.id}`}
-                      ref={(node) => {
-                        taskRefs.current[`${selectedDayPlan.dateKey}-${item.id}`] = node;
-                      }}
-                    >
-                      {(() => {
-                        const itemMinutes = parseTimeToMinutes(item.time);
-                        const isTimeLocked =
-                          selectedDayIsToday &&
-                          itemMinutes !== Number.MAX_SAFE_INTEGER &&
-                          nowMinutes < itemMinutes;
-                        const isToggleDisabled =
-                          selectedDayIsFuture || selectedDayIsBeforeStart || isTimeLocked;
-                        const lockLabel = isToggleDisabled ? "NO CHEATING" : undefined;
+                {selectedDayIsFuture ? (
+                  <div className="text-xs text-muted">Future dates are locked.</div>
+                ) : selectedDayIsBeforeStart ? (
+                  <div className="text-xs text-muted">
+                    {getTrackingStartLockMessage(selectedDayPlan.dateKey) ??
+                      "Tracking has not started yet for this date."}
+                  </div>
+                ) : selectedDayPlan.items.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-muted">
+                    No tasks yet. Add one to build today&apos;s rhythm.
+                  </div>
+                ) : (
+                  <div className="data-list">
+                    {selectedDayPlan.items.map((item) => (
+                      <div
+                        key={`${selectedDayPlan.dateKey}-${item.id}`}
+                        className="py-1"
+                        ref={(node) => {
+                          taskRefs.current[`${selectedDayPlan.dateKey}-${item.id}`] = node;
+                        }}
+                      >
+                        {(() => {
+                          const itemMinutes = parseTimeToMinutes(item.time);
+                          const isTimeLocked =
+                            selectedDayIsToday &&
+                            itemMinutes !== Number.MAX_SAFE_INTEGER &&
+                            nowMinutes < itemMinutes;
+                          const isToggleDisabled =
+                            selectedDayIsFuture || selectedDayIsBeforeStart || isTimeLocked;
+                          const lockLabel = isToggleDisabled ? "NO CHEATING" : undefined;
 
-                        return (
-                      <div className="flex items-center gap-3">
-                        <div className="min-w-0 flex-1">
-                          <RoutineItem
-                            time={item.time}
-                            endTime={item.endTime}
-                            title={item.title}
-                            highlight={item.highlight}
-                            href={
-                              selectedDayIsFuture || selectedDayIsBeforeStart || onOpenItem
-                                ? undefined
-                                : `/routine/${item.id}`
-                            }
-                            onOpen={
-                              selectedDayIsFuture || selectedDayIsBeforeStart || !onOpenItem
-                                ? undefined
-                                : () => onOpenItem(item.id)
-                            }
-                            checked={!!completionByDate[selectedDayPlan.dateKey]?.[item.id]}
-                            toggleDisabled={isToggleDisabled}
-                            lockLabel={lockLabel}
-                            onToggle={
-                              isToggleDisabled
-                                ? () => {}
-                                : () =>
-                                    handleToggleComplete(
-                                      selectedDayPlan.dateKey,
-                                      item.id,
-                                      selectedDayPlan.items.length,
-                                      item.time,
-                                    )
-                            }
-                          />
-                        </div>
-                        {!defaultTaskIdSet.has(item.id) ? (
-                          <button
-                            type="button"
-                            className="rounded-xl border border-border bg-card-strong px-3 py-2 text-[11px] font-semibold text-foreground"
-                            onClick={() => handleDeleteTaskRequest(item)}
-                          >
-                            Delete
-                          </button>
-                        ) : null}
+                          return (
+                            <div className="flex items-center gap-2 sm:gap-3">
+                              <div className="min-w-0 flex-1">
+                                <RoutineItem
+                                  time={item.time}
+                                  endTime={item.endTime}
+                                  title={item.title}
+                                  highlight={item.highlight}
+                                  href={
+                                    selectedDayIsFuture || selectedDayIsBeforeStart || onOpenItem
+                                      ? undefined
+                                      : `/routine/${item.id}`
+                                  }
+                                  onOpen={
+                                    selectedDayIsFuture ||
+                                    selectedDayIsBeforeStart ||
+                                    !onOpenItem
+                                      ? undefined
+                                      : () => onOpenItem(item.id)
+                                  }
+                                  checked={
+                                    !!completionByDate[selectedDayPlan.dateKey]?.[item.id]
+                                  }
+                                  toggleDisabled={isToggleDisabled}
+                                  lockLabel={lockLabel}
+                                  onToggle={
+                                    isToggleDisabled
+                                      ? () => {}
+                                      : () =>
+                                          handleToggleComplete(
+                                            selectedDayPlan.dateKey,
+                                            item.id,
+                                            selectedDayPlan.items.length,
+                                            item.time,
+                                          )
+                                  }
+                                />
+                              </div>
+                              {!defaultTaskIdSet.has(item.id) ? (
+                                <button
+                                  type="button"
+                                  className="soft-chip shrink-0 px-2.5 py-1.5 text-[11px] text-muted hover:text-foreground"
+                                  onClick={() => handleDeleteTaskRequest(item)}
+                                >
+                                  Delete
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
                       </div>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-              );
-            })()
-          ) : null}
-        </AnimatePresence>
-      </div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            );
+          })()
+        ) : null}
+      </AnimatePresence>
 
-      {deleteDialog ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5">
-            <div className="text-sm font-semibold text-foreground">
-              Delete task?
-            </div>
-            <div className="mt-2 text-xs text-muted">
-              You are about to delete {"\""}{deleteDialog.title}{"\""}. This action is permanent
-              and cannot be undone.
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-xl border border-border bg-card-strong px-3 py-2 text-xs font-semibold text-foreground"
-                onClick={() => setDeleteDialog(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="rounded-xl bg-accent/15 px-3 py-2 text-xs font-semibold text-accent"
-                onClick={handleDeleteTaskConfirm}
-              >
-                Delete
-              </button>
-            </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+        <div className="grid gap-0.5">
+          <div className="text-xs font-medium text-foreground">Progress tracking</div>
+          <div className="text-[11px] text-muted">
+            {weeklyTrackingConsent
+              ? "Saving weekly consistency"
+              : "Enable to save weekly progress"}
           </div>
         </div>
-      ) : null}
+        <button
+          onClick={() => {
+            if (weeklyTrackingConsent) {
+              return;
+            }
+            void handleWeeklyTrackingDecision(true);
+          }}
+          disabled={weeklyTrackingConsent === null || weeklyTrackingConsent}
+          aria-pressed={weeklyTrackingConsent === true}
+          className={`relative h-7 w-14 rounded-full transition ${
+            weeklyTrackingConsent ? "bg-accent/25" : "bg-card-strong/60"
+          } ${weeklyTrackingConsent === null ? "opacity-50" : ""}`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-foreground transition ${
+              weeklyTrackingConsent ? "right-0.5" : "left-0.5"
+            }`}
+          />
+        </button>
+      </div>
+
+      <OverlaySheet
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="Add to schedule"
+        subtitle="New task"
+      >
+        <div className="grid gap-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <label className="text-xs text-muted">Time</label>
+              <input
+                type="time"
+                value={form.time}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, time: event.target.value }))
+                }
+                className="rounded-xl bg-card-strong/40 px-3 py-2.5 text-sm text-foreground outline-none"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <label className="text-xs text-muted">End time</label>
+              <input
+                type="time"
+                value={form.endTime}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, endTime: event.target.value }))
+                }
+                className="rounded-xl bg-card-strong/40 px-3 py-2.5 text-sm text-foreground outline-none"
+              />
+            </div>
+          </div>
+          <div className="grid gap-1.5">
+            <label className="text-xs text-muted">Title</label>
+            <input
+              value={form.title}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, title: event.target.value }))
+              }
+              className="rounded-xl bg-card-strong/40 px-3 py-2.5 text-sm text-foreground outline-none"
+              placeholder="Task name"
+              autoFocus
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <label className="text-xs text-muted">Attach to</label>
+              <select
+                value={form.type}
+                onChange={(event) => {
+                  const nextType = event.target.value as RoutineType;
+                  setForm((prev) => ({ ...prev, type: nextType, targetId: "" }));
+                }}
+                className="rounded-xl bg-card-strong/40 px-3 py-2.5 text-sm text-foreground outline-none"
+              >
+                <option value="general">General</option>
+                <option value="recipe">Recipe</option>
+                <option value="workout">Workout</option>
+              </select>
+            </div>
+            {form.type !== "general" ? (
+              <div className="grid gap-1.5">
+                <label className="text-xs text-muted">
+                  {form.type === "recipe" ? "Recipe" : "Workout"}
+                </label>
+                <select
+                  value={form.targetId}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, targetId: event.target.value }))
+                  }
+                  className="rounded-xl bg-card-strong/40 px-3 py-2.5 text-sm text-foreground outline-none"
+                >
+                  <option value="">Select</option>
+                  {targets.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="rounded-xl bg-accent/15 px-4 py-2.5 text-sm font-semibold text-accent"
+            onClick={handleSave}
+          >
+            Save task
+          </button>
+        </div>
+      </OverlaySheet>
+
+      <OverlaySheet
+        open={Boolean(deleteDialog)}
+        onClose={() => setDeleteDialog(null)}
+        title="Delete task?"
+        subtitle="This cannot be undone"
+      >
+        <div className="grid gap-4">
+          <p className="text-xs text-muted">
+            You are about to delete {"\""}
+            {deleteDialog?.title}
+            {"\""}. This action is permanent.
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              className="soft-chip px-3 py-2 text-xs font-semibold text-foreground"
+              onClick={() => setDeleteDialog(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-xl bg-accent/15 px-3 py-2 text-xs font-semibold text-accent"
+              onClick={handleDeleteTaskConfirm}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </OverlaySheet>
     </div>
   );
 }

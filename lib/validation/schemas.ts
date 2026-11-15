@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isPasswordAcceptable } from "@/lib/validation/password";
 import { usernameSchema } from "@/lib/validation/username";
 
 const optionalNonEmptyUsername = z.preprocess(
@@ -14,24 +15,29 @@ const optionalNonEmptyUsername = z.preprocess(
 
 const optionalTrimmedName = z.preprocess(
   (value) => {
+    if (value === null) {
+      return "";
+    }
     if (typeof value !== "string") {
       return value;
     }
-    const trimmed = value.trim();
-    return trimmed.length ? trimmed : undefined;
+    return value.trim();
   },
   z.string().max(80, "Name must be 80 characters or fewer.").optional(),
 );
 
 const optionalPhotoUrl = z.preprocess(
   (value) => {
+    if (value === null) {
+      return null;
+    }
     if (typeof value !== "string") {
       return value;
     }
     const trimmed = value.trim();
-    return trimmed.length ? trimmed : undefined;
+    return trimmed.length ? trimmed : null;
   },
-  z.url("Avatar URL must be a valid URL.").optional(),
+  z.union([z.url("Avatar URL must be a valid URL."), z.null()]).optional(),
 );
 
 export const authResolveSchema = z.object({
@@ -63,17 +69,118 @@ export const loginInputSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-export const registerInputSchema = z.object({
-  username: usernameSchema,
-  email: z.email("Enter a valid email address."),
-  password: z.string().min(6, "Password must be at least 6 characters."),
+export const registerInputSchema = z
+  .object({
+    username: usernameSchema,
+    email: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .pipe(z.email("Enter a valid email address.")),
+    password: z.string().min(1, "Password is required."),
+    confirmPassword: z.string().min(1, "Confirm your password."),
+  })
+  .refine((value) => isPasswordAcceptable(value.password), {
+    message:
+      "Password is too weak. Use 8+ characters with mixed letter cases.",
+    path: ["password"],
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  });
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: z
+    .string()
+    .url("Invalid push endpoint")
+    .refine(
+      (value) => value.startsWith("https://"),
+      "Push endpoint must be HTTPS",
+    ),
+  keys: z.object({
+    p256dh: z.string().trim().min(1),
+    auth: z.string().trim().min(1),
+  }),
 });
 
-export const profileFormSchema = z.object({
-  username: optionalNonEmptyUsername,
-  name: optionalTrimmedName,
-  photoURL: optionalPhotoUrl,
+export const notificationPreferenceSchema = z.object({
+  email: z.boolean(),
+  push: z.boolean(),
+  sms: z.boolean().optional().default(false),
 });
+
+export const reminderCreateSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  scheduledFor: z
+    .string()
+    .refine((value) => !Number.isNaN(Date.parse(value)), "Invalid schedule date"),
+  channels: z
+    .object({
+      email: z.boolean().optional(),
+      push: z.boolean().optional(),
+      sms: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+export const reminderUpdateSchema = z.object({
+  id: z.string().trim().min(1),
+  title: z.string().trim().min(1).max(200).optional(),
+  scheduledFor: z
+    .string()
+    .refine((value) => !Number.isNaN(Date.parse(value)), "Invalid schedule date")
+    .optional(),
+});
+
+export const recurringReminderCreateSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  frequency: z.enum(["daily", "weekly"]),
+  time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Time must be HH:MM"),
+  daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
+  channels: z
+    .object({
+      email: z.boolean().optional(),
+      push: z.boolean().optional(),
+      sms: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+export const recurringReminderUpdateSchema = z.object({
+  id: z.string().trim().min(1),
+  title: z.string().trim().min(1).max(200).optional(),
+  frequency: z.enum(["daily", "weekly"]).optional(),
+  time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Time must be HH:MM")
+    .optional(),
+  daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
+  paused: z.boolean().optional(),
+  channels: z
+    .object({
+      email: z.boolean().optional(),
+      push: z.boolean().optional(),
+      sms: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+export const dateRangeQuerySchema = z.object({
+  startDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  endDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
+/** Client + server profile payload — keep a single schema. */
+export const profileFormSchema = profileUpdateSchema;
 
 export const routineChecklistUpdateSchema = z.object({
   date: z

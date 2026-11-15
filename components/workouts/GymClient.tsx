@@ -1,10 +1,18 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { useRef, useState } from "react";
-import GlassCard from "@/components/shared/GlassCard";
+import Image from "next/image";
+import { useState } from "react";
+import {
+  TypeBody,
+  TypeHeading,
+  TypeMeta,
+  TypeTitle,
+} from "@/components/shared/DataSurfaces";
 import SectionHeader from "@/components/shared/SectionHeader";
-import BodyMap3D from "@/components/workouts/BodyMap3D";
+
+/** External anatomy refs use many hosts — skip Next image optimization CDN. */
+const atlasImageLoader = ({ src }: { src: string }) => src;
 
 type TableBlock = {
   id: string;
@@ -20,7 +28,11 @@ type DayPlan = {
   shortTitle: string;
   subtitle?: string;
   blocks: TableBlock[];
+  /** Rest / blank days stay closed with no expand affordance */
+  rest?: boolean;
 };
+
+type GymTab = "workouts" | "atlas";
 
 type AtlasImage = {
   src: string;
@@ -36,20 +48,6 @@ type AtlasSection = {
   bullets?: string[];
   images?: AtlasImage[];
   blocks: TableBlock[];
-};
-
-type Hotspot = {
-  id: string;
-  label: string;
-  targetId: string;
-  position: [number, number, number];
-};
-
-type BodyMapView = {
-  id: string;
-  label: string;
-  model: "front" | "back";
-  hotspots: Hotspot[];
 };
 
 
@@ -68,18 +66,11 @@ const item = {
   show: { opacity: 1, y: 0 },
 };
 
-const workoutDayKey = [
-  { day: "Day 1 & 4", focus: "Chest + Triceps" },
-  { day: "Day 2 & 5", focus: "Back + Biceps" },
-  { day: "Day 3 & 6", focus: "Legs + Shoulders" },
-  { day: "Day 7", focus: "Rest" },
-];
-
 const dayPlans: DayPlan[] = [
   {
     id: "day-1",
-    title: "Day 1 - Chest + Triceps",
-    shortTitle: "Day 1",
+    title: "Day 1 & 4 - Chest + Triceps",
+    shortTitle: "Day 1 & 4",
     subtitle: "Warm-up, working sets, stretching",
     blocks: [
       {
@@ -215,8 +206,8 @@ const dayPlans: DayPlan[] = [
   },
   {
     id: "day-2",
-    title: "Day 2 - Back + Biceps",
-    shortTitle: "Day 2",
+    title: "Day 2 & 5 - Back + Biceps",
+    shortTitle: "Day 2 & 5",
     subtitle: "Warm-up, pulling volume, stretching",
     blocks: [
       {
@@ -283,8 +274,8 @@ const dayPlans: DayPlan[] = [
   },
   {
     id: "day-3",
-    title: "Day 3 - Legs + Shoulders",
-    shortTitle: "Day 3",
+    title: "Day 3 & 6 - Legs + Shoulders",
+    shortTitle: "Day 3 & 6",
     subtitle: "Lower body plus deltoids",
     blocks: [
       {
@@ -389,8 +380,17 @@ const dayPlans: DayPlan[] = [
       },
     ],
   },
+  {
+    id: "day-7",
+    title: "Day 7 - Rest",
+    shortTitle: "Day 7",
+    subtitle: "Full recovery — no programmed lifts.",
+    blocks: [],
+    rest: true,
+  },
 ];
 
+/** Head → foot order for the muscle atlas tab */
 const atlasSections: AtlasSection[] = [
   {
     id: "atlas-head",
@@ -959,251 +959,348 @@ const atlasSections: AtlasSection[] = [
   },
 ];
 
-const bodyMapViews: BodyMapView[] = [
-  {
-    id: "map-front",
-    label: "Front view",
-    model: "front",
-    hotspots: [
-      { id: "hotspot-chest", label: "Chest", targetId: "atlas-chest", position: [0.04691519087453997, 0.08938487487517151, 0.5377861670510502] },
-      { id: "hotspot-core", label: "Core", targetId: "atlas-hips", position: [0.11170218607062084, -0.04281699174249245, 0.5788243812891534] },
-      { id: "hotspot-thighs", label: "Thighs", targetId: "atlas-legs", position: [-0.028185234304734016, -0.2593131669460013, 0.46056888170484117] },
-      { id: "hotspot-calves", label: "Calves", targetId: "atlas-calves", position: [0.016227609821627336, -0.48844875180883646, 0.25087464233037027] },
-      { id: "hotspot-feet", label: "Feet", targetId: "atlas-feet", position: [-0.027709805505465524, -0.6334392005019384, 0.49303572020898534] },
-      { id: "hotspot-arms", label: "Arms", targetId: "atlas-shoulders", position: [-0.2078284422616432, -0.010642187531088812, 0.22218254913082394] },
-      { id: "hotspot-head", label: "Head", targetId: "atlas-head", position: [0.11628860720719446, 0.27729133518627724, 0.5619318693885287] },
-    ],
-  },
-  {
-    id: "map-back",
-    label: "Back view",
-    model: "back",
-    hotspots: [
-      { id: "hotspot-back", label: "Back", targetId: "atlas-back", position: [0.21088614210119144, 0.11773648943019398, -0.23841976867274256] },
-      { id: "hotspot-glutes", label: "Glutes", targetId: "atlas-hips", position: [0.22030853289766525, -0.13379861081608543, -0.10786902937675301] },
-      { id: "hotspot-hamstrings", label: "Hamstrings", targetId: "atlas-legs", position: [0.055004591884786284, -0.24022726784408132, -0.008014563164003443] },
-    ],
-  },
-];
-
-const bodyModelUrl = "/Male.OBJ";
-
-const getGridTemplate = (count: number) => `repeat(${count}, minmax(0, 1fr))`;
-
-export default function GymClient() {
-  const sectionRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
-  const [hoverCoords, setHoverCoords] = useState<[number, number, number] | null>(null);
-
-  const focusSection = (id: string) => {
-    const node = sectionRefs.current[id];
-    if (!node) return;
-    node.open = true;
-    node.scrollIntoView({ behavior: "smooth", block: "start" });
+const shortenLabel = (column: string) => {
+  const aliases: Record<string, string> = {
+    "Exercises ( / alternatives)": "Exercises",
+    "Exercises ( / separated )": "Exercises",
+    "Reps / Time": "Reps",
+    "Home / Gym": "Where",
+    "Chest muscle / region": "Muscle",
+    "Muscle (region)": "Muscle",
+    "Triceps muscle": "Muscle",
+    "Area": "Area",
   };
 
-  const allSections = [...dayPlans, ...atlasSections];
+  if (aliases[column]) {
+    return aliases[column];
+  }
+
+  return column
+    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/\s*\/\s*alternatives/gi, "")
+    .replace(/\s*\/\s*separated\s*/gi, "")
+    .trim();
+};
+
+/** First column stays wide; later cols (sets/reps/rest) stay compact. */
+const columnWidthClass = (index: number, total: number) => {
+  if (index === 0) {
+    return "min-w-[8.5rem] sm:min-w-[11rem]";
+  }
+  if (index === 1 && total >= 4) {
+    return "min-w-[10rem] sm:min-w-[14rem]";
+  }
+  return "min-w-[3.25rem] whitespace-nowrap";
+};
+
+function TableBlocks({ blocks }: { blocks: TableBlock[] }) {
+  return (
+    <div className="grid gap-1">
+      {blocks.map((block) => (
+        <div key={block.id} className="type-block grid gap-2">
+          <div>
+            {/* 2nd level — pre / main / post training block */}
+            <TypeHeading>{block.title}</TypeHeading>
+            {block.note ? (
+              <TypeMeta className="mt-0.5">{block.note}</TypeMeta>
+            ) : null}
+          </div>
+
+          <div className="themed-scroll -mx-1 overflow-x-auto px-1">
+            <table className="w-full min-w-[28rem] border-collapse text-left">
+              <thead>
+                <tr className="border-b border-border/50">
+                  {block.columns.map((column, columnIndex) => (
+                    <th
+                      key={`${block.id}-h-${column}`}
+                      scope="col"
+                      className={`type-kicker px-2 py-1.5 text-left first:pl-0 last:pr-0 ${columnWidthClass(
+                        columnIndex,
+                        block.columns.length,
+                      )}`}
+                    >
+                      {shortenLabel(column)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, rowIndex) => (
+                  <tr
+                    key={`${block.id}-${rowIndex}`}
+                    className="border-b border-border/30 last:border-b-0"
+                  >
+                    {row.map((cell, cellIndex) => (
+                      <td
+                        key={`${block.id}-${rowIndex}-${cellIndex}`}
+                        className={`px-2 py-2 align-top first:pl-0 last:pr-0 ${
+                          cellIndex === 0
+                            ? "type-body font-medium text-foreground"
+                            : cellIndex === 1
+                              ? "type-body text-muted"
+                              : "type-meta tabular-nums text-foreground"
+                        } ${columnWidthClass(cellIndex, block.columns.length)}`}
+                      >
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function GymClient() {
+  const [tab, setTab] = useState<GymTab>("workouts");
+  const [activeWorkoutId, setActiveWorkoutId] = useState(
+    () => dayPlans[0]?.id ?? "day-1",
+  );
+  const [activeAtlasId, setActiveAtlasId] = useState(
+    () => atlasSections[0]?.id ?? "atlas-head",
+  );
+
+  const activeWorkout =
+    dayPlans.find((plan) => plan.id === activeWorkoutId) ?? dayPlans[0];
+  const activeAtlas =
+    atlasSections.find((section) => section.id === activeAtlasId) ??
+    atlasSections[0];
 
   return (
     <motion.div className="grid gap-5" variants={container} initial="hidden" animate="show">
       <motion.div variants={item}>
-        <SectionHeader title="Gym" action="Muscle atlas" />
+        <SectionHeader title="Gym" action="Training library" />
       </motion.div>
 
       <motion.div variants={item}>
-        <GlassCard className="grid gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-xs text-muted">Workout day key</div>
-              <div className="text-sm font-semibold text-foreground">Weekly split overview</div>
-            </div>
-            <div className="rounded-full border border-border px-3 py-1 text-[10px] text-muted">
-              {allSections.length} sections
-            </div>
-          </div>
+        <div
+          className="grid grid-cols-2 gap-1 rounded-2xl bg-card-strong/40 p-1"
+          role="tablist"
+          aria-label="Gym content"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "workouts"}
+            className={`rounded-xl px-3 py-2.5 text-center type-heading transition ${
+              tab === "workouts"
+                ? "bg-accent/15 text-accent"
+                : "text-muted hover:text-foreground"
+            }`}
+            onClick={() => setTab("workouts")}
+          >
+            Weekly workouts
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "atlas"}
+            className={`rounded-xl px-3 py-2.5 text-center type-heading transition ${
+              tab === "atlas"
+                ? "bg-accent/15 text-accent"
+                : "text-muted hover:text-foreground"
+            }`}
+            onClick={() => setTab("atlas")}
+          >
+            Muscle atlas
+          </button>
+        </div>
+      </motion.div>
 
-          <div className="flex flex-wrap gap-2">
-            {workoutDayKey.map((item) => (
-              <div
-                key={item.day}
-                className="rounded-full border border-border bg-card px-3 py-1 text-[11px] text-foreground"
+      {tab === "workouts" ? (
+        <motion.div
+          key="workouts"
+          variants={item}
+          initial="hidden"
+          animate="show"
+          className="grid gap-3"
+          role="tabpanel"
+          aria-label="Weekly workouts"
+        >
+          <div
+            className="no-scrollbar flex gap-1.5 overflow-x-auto pb-0.5"
+            role="tablist"
+            aria-label="Workout day"
+          >
+            {dayPlans.map((plan) => (
+              <button
+                key={plan.id}
+                type="button"
+                role="tab"
+                aria-selected={plan.id === activeWorkoutId}
+                onClick={() => setActiveWorkoutId(plan.id)}
+                className="soft-chip shrink-0"
               >
-                <span className="font-semibold">{item.day}</span> · {item.focus}
-              </div>
+                {plan.shortTitle}
+              </button>
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {allSections.map((section) => (
+          {activeWorkout ? (
+            <motion.div
+              key={activeWorkout.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="glass-card grid gap-4 p-4"
+            >
+              <div className="flex items-start gap-2">
+                <button
+                  type="button"
+                  className="soft-chip mt-0.5 shrink-0 px-2.5"
+                  aria-label="Previous day"
+                  onClick={() => {
+                    const index = dayPlans.findIndex(
+                      (plan) => plan.id === activeWorkoutId,
+                    );
+                    const prev =
+                      dayPlans[(index - 1 + dayPlans.length) % dayPlans.length];
+                    if (prev) setActiveWorkoutId(prev.id);
+                  }}
+                >
+                  ‹
+                </button>
+                <div className="min-w-0 flex-1 text-center">
+                  <TypeTitle>{activeWorkout.title}</TypeTitle>
+                  {activeWorkout.subtitle ? (
+                    <TypeMeta className="mt-0.5">{activeWorkout.subtitle}</TypeMeta>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="soft-chip mt-0.5 shrink-0 px-2.5"
+                  aria-label="Next day"
+                  onClick={() => {
+                    const index = dayPlans.findIndex(
+                      (plan) => plan.id === activeWorkoutId,
+                    );
+                    const next = dayPlans[(index + 1) % dayPlans.length];
+                    if (next) setActiveWorkoutId(next.id);
+                  }}
+                >
+                  ›
+                </button>
+              </div>
+
+              {activeWorkout.rest ? null : (
+                <TableBlocks blocks={activeWorkout.blocks} />
+              )}
+            </motion.div>
+          ) : null}
+        </motion.div>
+      ) : (
+        <motion.div
+          key="atlas"
+          variants={item}
+          initial="hidden"
+          animate="show"
+          className="grid gap-3"
+          role="tabpanel"
+          aria-label="Muscle atlas"
+        >
+          <div
+            className="no-scrollbar flex gap-1.5 overflow-x-auto pb-0.5"
+            role="tablist"
+            aria-label="Muscle atlas region"
+          >
+            {atlasSections.map((section) => (
               <button
                 key={section.id}
                 type="button"
-                onClick={() => focusSection(section.id)}
-                className="rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted transition hover:border-accent hover:text-foreground"
+                role="tab"
+                aria-selected={section.id === activeAtlasId}
+                onClick={() => setActiveAtlasId(section.id)}
+                className="soft-chip shrink-0"
               >
                 {section.shortTitle}
               </button>
             ))}
           </div>
-        </GlassCard>
-      </motion.div>
 
-      <motion.div variants={item}>
-        <GlassCard className="grid gap-4">
-          <div>
-            <div className="text-xs text-muted">Select a muscle</div>
-            <div className="text-sm font-semibold text-foreground">Body map</div>
-            <div className="text-[11px] text-muted">Click the body to reveal a muscle label. Rotate to see the back.</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-            <div className="rounded-full border border-border bg-card px-3 py-1">
-              Hover coords: {hoverCoords ? hoverCoords.map((value) => value.toFixed(2)).join(", ") : "-"}
-            </div>
-          </div>
-          <div className="relative overflow-hidden rounded-3xl border border-border bg-[radial-gradient(circle_at_top,_rgba(124,108,255,0.12),_rgba(16,21,33,0.95)_60%)]">
-            <BodyMap3D
-              view="front"
-              modelUrl={bodyModelUrl}
-              hotspots={[...bodyMapViews[0].hotspots, ...bodyMapViews[1].hotspots]}
-              onSelect={focusSection}
-              onHoverCoords={setHoverCoords}
-            />
-          </div>
-        </GlassCard>
-      </motion.div>
-
-      <motion.div variants={item}>
-        <div className="grid gap-4">
-          {dayPlans.map((plan, index) => (
-            <details
-              key={plan.id}
-              ref={(node) => {
-                sectionRefs.current[plan.id] = node;
-              }}
-              className="rounded-3xl border border-border bg-card"
-              open={index === 0}
+          {activeAtlas ? (
+            <motion.div
+              key={activeAtlas.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="glass-card grid gap-4 p-4"
             >
-              <summary className="cursor-pointer list-none px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs text-muted">Workout day</div>
-                    <div className="text-sm font-semibold text-foreground">{plan.title}</div>
-                  </div>
-                  <div className="rounded-full border border-border px-3 py-1 text-[10px] text-muted">
-                    {plan.blocks.length} blocks
-                  </div>
+              <div className="flex items-start gap-2">
+                <button
+                  type="button"
+                  className="soft-chip mt-0.5 shrink-0 px-2.5"
+                  aria-label="Previous region"
+                  onClick={() => {
+                    const index = atlasSections.findIndex(
+                      (section) => section.id === activeAtlasId,
+                    );
+                    const prev =
+                      atlasSections[
+                        (index - 1 + atlasSections.length) % atlasSections.length
+                      ];
+                    if (prev) setActiveAtlasId(prev.id);
+                  }}
+                >
+                  ‹
+                </button>
+                <div className="min-w-0 flex-1 text-center">
+                  <TypeTitle>{activeAtlas.title}</TypeTitle>
+                  {activeAtlas.subtitle ? (
+                    <TypeMeta className="mt-0.5">{activeAtlas.subtitle}</TypeMeta>
+                  ) : null}
                 </div>
-              </summary>
-              <div className="grid gap-4 border-t border-border px-4 py-4">
-                {plan.subtitle ? <div className="text-xs text-muted">{plan.subtitle}</div> : null}
-                {plan.blocks.map((block) => (
-                  <div key={block.id} className="grid gap-2">
-                    <div className="text-sm font-semibold text-foreground">{block.title}</div>
-                    {block.note ? <div className="text-xs text-muted">{block.note}</div> : null}
-                    <div className="grid gap-2">
-                      <div
-                        className="grid gap-2 text-[10px] uppercase tracking-wide text-muted"
-                        style={{ gridTemplateColumns: getGridTemplate(block.columns.length) }}
-                      >
-                        {block.columns.map((column) => (
-                          <div key={column}>{column}</div>
-                        ))}
-                      </div>
-                      {block.rows.map((row, rowIndex) => (
-                        <div
-                          key={`${block.id}-${rowIndex}`}
-                          className="grid gap-2 border-t border-border pt-2 text-[11px] text-foreground"
-                          style={{ gridTemplateColumns: getGridTemplate(block.columns.length) }}
-                        >
-                          {row.map((cell, cellIndex) => (
-                            <div key={`${block.id}-${rowIndex}-${cellIndex}`}>{cell}</div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                <button
+                  type="button"
+                  className="soft-chip mt-0.5 shrink-0 px-2.5"
+                  aria-label="Next region"
+                  onClick={() => {
+                    const index = atlasSections.findIndex(
+                      (section) => section.id === activeAtlasId,
+                    );
+                    const next =
+                      atlasSections[(index + 1) % atlasSections.length];
+                    if (next) setActiveAtlasId(next.id);
+                  }}
+                >
+                  ›
+                </button>
               </div>
-            </details>
-          ))}
-        </div>
-      </motion.div>
 
-      <motion.div variants={item}>
-        <div className="grid gap-4">
-          {atlasSections.map((section) => (
-            <details
-              key={section.id}
-              ref={(node) => {
-                sectionRefs.current[section.id] = node;
-              }}
-              className="rounded-3xl border border-border bg-card"
-            >
-              <summary className="cursor-pointer list-none px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs text-muted">Muscle atlas</div>
-                    <div className="text-sm font-semibold text-foreground">{section.title}</div>
-                  </div>
-                  <div className="rounded-full border border-border px-3 py-1 text-[10px] text-muted">
-                    {section.blocks.length} tables
-                  </div>
+              {activeAtlas.note ? (
+                <TypeBody className="text-muted">{activeAtlas.note}</TypeBody>
+              ) : null}
+              {activeAtlas.bullets ? (
+                <div className="grid gap-0.5">
+                  {activeAtlas.bullets.map((bullet) => (
+                    <TypeMeta key={bullet}>{bullet}</TypeMeta>
+                  ))}
                 </div>
-              </summary>
-              <div className="grid gap-4 border-t border-border px-4 py-4">
-                {section.subtitle ? <div className="text-xs text-muted">{section.subtitle}</div> : null}
-                {section.note ? <div className="text-xs text-muted">{section.note}</div> : null}
-                {section.bullets ? (
-                  <div className="grid gap-1 text-xs text-muted">
-                    {section.bullets.map((bullet) => (
-                      <div key={bullet}>- {bullet}</div>
-                    ))}
-                  </div>
-                ) : null}
-                {section.images ? (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {section.images.map((image) => (
-                      <img
-                        key={image.src}
-                        src={image.src}
-                        alt={image.alt}
-                        className="h-[220px] w-full rounded-2xl border border-border object-cover"
-                        loading="lazy"
-                      />
-                    ))}
-                  </div>
-                ) : null}
-                {section.blocks.map((block) => (
-                  <div key={block.id} className="grid gap-2">
-                    <div className="text-sm font-semibold text-foreground">{block.title}</div>
-                    {block.note ? <div className="text-xs text-muted">{block.note}</div> : null}
-                    <div className="grid gap-2">
-                      <div
-                        className="grid gap-2 text-[10px] uppercase tracking-wide text-muted"
-                        style={{ gridTemplateColumns: getGridTemplate(block.columns.length) }}
-                      >
-                        {block.columns.map((column) => (
-                          <div key={column}>{column}</div>
-                        ))}
-                      </div>
-                      {block.rows.map((row, rowIndex) => (
-                        <div
-                          key={`${block.id}-${rowIndex}`}
-                          className="grid gap-2 border-t border-border pt-2 text-[11px] text-foreground"
-                          style={{ gridTemplateColumns: getGridTemplate(block.columns.length) }}
-                        >
-                          {row.map((cell, cellIndex) => (
-                            <div key={`${block.id}-${rowIndex}-${cellIndex}`}>{cell}</div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </details>
-          ))}
-        </div>
-      </motion.div>
+              ) : null}
+              {activeAtlas.images ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {activeAtlas.images.map((image) => (
+                    <Image
+                      key={image.src}
+                      loader={atlasImageLoader}
+                      src={image.src}
+                      alt={image.alt}
+                      width={800}
+                      height={352}
+                      className="h-36 w-full rounded-xl object-cover sm:h-44"
+                      unoptimized
+                    />
+                  ))}
+                </div>
+              ) : null}
+              <TableBlocks blocks={activeAtlas.blocks} />
+            </motion.div>
+          ) : null}
+        </motion.div>
+      )}
     </motion.div>
   );
 }

@@ -1,7 +1,13 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
+import {
+  DataList,
+  DataRow,
+  OpenHint,
+  SoftChip,
+} from "@/components/shared/DataSurfaces";
+import OverlaySheet from "@/components/shared/OverlaySheet";
 
 type Preference = {
   email: boolean;
@@ -25,12 +31,77 @@ type RecurringReminder = {
   paused?: boolean;
 };
 
-const modalMotion = {
-  initial: { y: 30, opacity: 0 },
-  animate: { y: 0, opacity: 1 },
-  exit: { y: 30, opacity: 0 },
-  transition: { type: "spring" as const, damping: 24, stiffness: 260 },
+type ComposeMode = "once" | "repeat";
+
+type EditingTarget = {
+  kind: ComposeMode;
+  id: string;
+  title: string;
 };
+
+type DeleteTarget = {
+  kind: ComposeMode;
+  id: string;
+  title: string;
+};
+
+const WEEKDAYS = [
+  [0, "S"],
+  [1, "M"],
+  [2, "T"],
+  [3, "W"],
+  [4, "T"],
+  [5, "F"],
+  [6, "S"],
+] as const;
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const formatWhen = (iso: string) => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  return date.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+};
+
+const toDatetimeLocal = (iso: string) => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const formatRecurringMeta = (item: RecurringReminder) => {
+  if (item.frequency === "daily") {
+    return `Daily · ${item.time}`;
+  }
+  const days =
+    item.daysOfWeek.length > 0
+      ? item.daysOfWeek
+          .slice()
+          .sort((a, b) => a - b)
+          .map((day) => DAY_LABELS[day] ?? "?")
+          .join(" ")
+      : "Weekly";
+  return `${days} · ${item.time}`;
+};
+
+const emptyCompose = () => ({
+  title: "",
+  scheduledFor: "",
+  time: "08:00",
+  frequency: "daily" as "daily" | "weekly",
+  daysOfWeek: [] as number[],
+});
 
 export default function RemindersPanel() {
   const [preference, setPreference] = useState<Preference>({
@@ -38,153 +109,233 @@ export default function RemindersPanel() {
     push: false,
     sms: false,
   });
-  const [title, setTitle] = useState("");
-  const [scheduledFor, setScheduledFor] = useState("");
   const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
-  const [recurringTitle, setRecurringTitle] = useState("");
-  const [recurringTime, setRecurringTime] = useState("08:00");
-  const [frequency, setFrequency] = useState<"daily" | "weekly">("daily");
-  const [daysOfWeek, setDaysOfWeek] = useState<number[]>([]);
   const [recurring, setRecurring] = useState<RecurringReminder[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [isOpen, setIsOpen] = useState(false);
-  const allPaused = recurring.length > 0 && recurring.every((item) => item.paused);
+  const [status, setStatus] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [composeMode, setComposeMode] = useState<ComposeMode>("once");
+  const [editing, setEditing] = useState<EditingTarget | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [draft, setDraft] = useState(emptyCompose);
+
+  const allPaused =
+    recurring.length > 0 && recurring.every((item) => item.paused);
+  const activeCount =
+    reminders.length + recurring.filter((item) => !item.paused).length;
 
   useEffect(() => {
-    const loadPreferences = async () => {
-      const response = await fetch("/api/notifications/preferences");
-      if (!response.ok) {
-        return;
+    const load = async () => {
+      const [prefRes, onceRes, recurRes] = await Promise.all([
+        fetch("/api/notifications/preferences"),
+        fetch("/api/notifications/reminders"),
+        fetch("/api/notifications/recurring"),
+      ]);
+
+      if (prefRes.ok) {
+        const data = (await prefRes.json()) as { preference: Preference };
+        setPreference(data.preference);
       }
-      const data = (await response.json()) as { preference: Preference };
-      setPreference(data.preference);
-    };
-    const loadReminders = async () => {
-      const response = await fetch("/api/notifications/reminders");
-      if (!response.ok) {
-        return;
+      if (onceRes.ok) {
+        const data = (await onceRes.json()) as { reminders: Reminder[] };
+        setReminders(data.reminders);
       }
-      const data = (await response.json()) as { reminders: Reminder[] };
-      setReminders(data.reminders);
-    };
-    const loadRecurring = async () => {
-      const response = await fetch("/api/notifications/recurring");
-      if (!response.ok) {
-        return;
+      if (recurRes.ok) {
+        const data = (await recurRes.json()) as {
+          recurring: RecurringReminder[];
+        };
+        setRecurring(data.recurring);
       }
-      const data = (await response.json()) as {
-        recurring: RecurringReminder[];
-      };
-      setRecurring(data.recurring);
     };
-    loadPreferences();
-    loadReminders();
-    loadRecurring();
+
+    void load();
   }, []);
 
-  const handleCreateReminder = async () => {
-    if (!title || !scheduledFor) {
-      setStatus("Add title and time");
+  useEffect(() => {
+    if (!status) {
       return;
     }
+    const timer = window.setTimeout(() => setStatus(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [status]);
 
-    const response = await fetch("/api/notifications/reminders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, scheduledFor, channels: preference }),
-    });
+  const upcomingOnce = useMemo(
+    () =>
+      [...reminders].sort(
+        (a, b) =>
+          new Date(a.scheduledFor).getTime() -
+          new Date(b.scheduledFor).getTime(),
+      ),
+    [reminders],
+  );
 
-    if (!response.ok) {
-      const body = (await response.json()) as { error?: string };
-      setStatus(body.error || "Failed to schedule reminder");
-      return;
-    }
-
-    const data = (await response.json()) as { reminder: Reminder };
-    setReminders((prev) => [data.reminder, ...prev]);
-    setTitle("");
-    setScheduledFor("");
-    setStatus("Reminder scheduled");
+  const resetCompose = () => {
+    setEditing(null);
+    setComposeMode("once");
+    setDraft(emptyCompose());
   };
 
-  const handleCreateRecurring = async () => {
-    if (!recurringTitle || !recurringTime) {
-      setStatus("Add title and time");
-      return;
-    }
-
-    const response = await fetch("/api/notifications/recurring", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: recurringTitle,
-        time: recurringTime,
-        frequency,
-        daysOfWeek: frequency === "weekly" ? daysOfWeek : [],
-        channels: preference,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = (await response.json()) as { error?: string };
-      setStatus(body.error || "Failed to create recurring reminder");
-      return;
-    }
-
-    const data = (await response.json()) as { recurring: RecurringReminder };
-    setRecurring((prev) => [data.recurring, ...prev]);
-    setRecurringTitle("");
-    setRecurringTime("08:00");
-    setDaysOfWeek([]);
-    setStatus("Recurring reminder created");
+  const openCreate = () => {
+    resetCompose();
+    setSheetOpen(true);
   };
 
-  const handleEditRecurring = (item: RecurringReminder) => {
-    setEditingId(item._id);
-    setRecurringTitle(item.title);
-    setRecurringTime(item.time);
-    setFrequency(item.frequency);
-    setDaysOfWeek(item.daysOfWeek || []);
-    setIsOpen(true);
+  const openEditOnce = (item: Reminder) => {
+    setEditing({ kind: "once", id: item._id, title: item.title });
+    setComposeMode("once");
+    setDraft({
+      ...emptyCompose(),
+      title: item.title,
+      scheduledFor: toDatetimeLocal(item.scheduledFor),
+    });
+    setSheetOpen(true);
   };
 
-  const handleUpdateRecurring = async () => {
-    if (!editingId) {
-      return;
-    }
-    if (!recurringTitle || !recurringTime) {
-      setStatus("Add title and time");
-      return;
-    }
-
-    const response = await fetch("/api/notifications/recurring", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: editingId,
-        title: recurringTitle,
-        time: recurringTime,
-        frequency,
-        daysOfWeek: frequency === "weekly" ? daysOfWeek : [],
-      }),
+  const openEditRecurring = (item: RecurringReminder) => {
+    setEditing({ kind: "repeat", id: item._id, title: item.title });
+    setComposeMode("repeat");
+    setDraft({
+      title: item.title,
+      scheduledFor: "",
+      time: item.time,
+      frequency: item.frequency,
+      daysOfWeek: item.daysOfWeek || [],
     });
+    setSheetOpen(true);
+  };
 
-    if (!response.ok) {
-      const body = (await response.json()) as { error?: string };
-      setStatus(body.error || "Failed to update recurring reminder");
+  const closeSheet = () => {
+    setSheetOpen(false);
+    resetCompose();
+  };
+
+  const handleSave = async () => {
+    const title = draft.title.trim();
+    if (!title) {
+      setStatus("Add a title");
       return;
     }
 
-    const data = (await response.json()) as { recurring: RecurringReminder };
-    setRecurring((prev) =>
-      prev.map((item) => (item._id === data.recurring._id ? data.recurring : item)),
-    );
-    setEditingId(null);
-    setRecurringTitle("");
-    setRecurringTime("08:00");
-    setDaysOfWeek([]);
-    setStatus("Recurring reminder updated");
+    setSaving(true);
+    try {
+      if (composeMode === "once") {
+        if (!draft.scheduledFor) {
+          setStatus("Pick a date and time");
+          return;
+        }
+
+        if (editing?.kind === "once") {
+          const response = await fetch("/api/notifications/reminders", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: editing.id,
+              title,
+              scheduledFor: draft.scheduledFor,
+            }),
+          });
+
+          if (!response.ok) {
+            const body = (await response.json()) as { error?: string };
+            setStatus(body.error || "Could not update");
+            return;
+          }
+
+          const data = (await response.json()) as { reminder: Reminder };
+          setReminders((prev) =>
+            prev.map((item) =>
+              item._id === data.reminder._id ? data.reminder : item,
+            ),
+          );
+          setStatus("Updated");
+          closeSheet();
+          return;
+        }
+
+        const response = await fetch("/api/notifications/reminders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            scheduledFor: draft.scheduledFor,
+            channels: preference,
+          }),
+        });
+
+        if (!response.ok) {
+          const body = (await response.json()) as { error?: string };
+          setStatus(body.error || "Could not schedule");
+          return;
+        }
+
+        const data = (await response.json()) as { reminder: Reminder };
+        setReminders((prev) => [data.reminder, ...prev]);
+        setStatus("Scheduled");
+        closeSheet();
+        return;
+      }
+
+      if (draft.frequency === "weekly" && draft.daysOfWeek.length === 0) {
+        setStatus("Pick at least one day");
+        return;
+      }
+
+      if (editing?.kind === "repeat") {
+        const response = await fetch("/api/notifications/recurring", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: editing.id,
+            title,
+            time: draft.time,
+            frequency: draft.frequency,
+            daysOfWeek: draft.frequency === "weekly" ? draft.daysOfWeek : [],
+          }),
+        });
+
+        if (!response.ok) {
+          const body = (await response.json()) as { error?: string };
+          setStatus(body.error || "Could not update");
+          return;
+        }
+
+        const data = (await response.json()) as { recurring: RecurringReminder };
+        setRecurring((prev) =>
+          prev.map((item) =>
+            item._id === data.recurring._id ? data.recurring : item,
+          ),
+        );
+        setStatus("Updated");
+        closeSheet();
+        return;
+      }
+
+      const response = await fetch("/api/notifications/recurring", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          time: draft.time,
+          frequency: draft.frequency,
+          daysOfWeek: draft.frequency === "weekly" ? draft.daysOfWeek : [],
+          channels: preference,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json()) as { error?: string };
+        setStatus(body.error || "Could not create");
+        return;
+      }
+
+      const data = (await response.json()) as { recurring: RecurringReminder };
+      setRecurring((prev) => [data.recurring, ...prev]);
+      setStatus("Repeating reminder set");
+      closeSheet();
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleTogglePaused = async (item: RecurringReminder) => {
@@ -195,13 +346,15 @@ export default function RemindersPanel() {
     });
 
     if (!response.ok) {
-      setStatus("Failed to update pause state");
+      setStatus("Could not update");
       return;
     }
 
     const data = (await response.json()) as { recurring: RecurringReminder };
     setRecurring((prev) =>
-      prev.map((entry) => (entry._id === data.recurring._id ? data.recurring : entry)),
+      prev.map((entry) =>
+        entry._id === data.recurring._id ? data.recurring : entry,
+      ),
     );
   };
 
@@ -210,317 +363,443 @@ export default function RemindersPanel() {
       return;
     }
     const nextPaused = !allPaused;
-    const updates = recurring.map((item) =>
-      fetch("/api/notifications/recurring", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: item._id, paused: nextPaused }),
-      }),
+    const results = await Promise.all(
+      recurring.map((item) =>
+        fetch("/api/notifications/recurring", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: item._id, paused: nextPaused }),
+        }),
+      ),
     );
 
-    const results = await Promise.all(updates);
     if (results.some((res) => !res.ok)) {
-      setStatus("Failed to update pause state");
+      setStatus("Could not update");
       return;
     }
 
-    setRecurring((prev) => prev.map((item) => ({ ...item, paused: nextPaused })));
+    setRecurring((prev) =>
+      prev.map((item) => ({ ...item, paused: nextPaused })),
+    );
   };
 
-  const handleDeleteRecurring = async (id: string) => {
-    const response = await fetch(`/api/notifications/recurring?id=${id}`, {
-      method: "DELETE",
-    });
-
-    if (!response.ok) {
-      setStatus("Failed to delete recurring reminder");
+  const confirmDelete = async () => {
+    if (!deleteTarget) {
       return;
     }
 
-    setRecurring((prev) => prev.filter((item) => item._id !== id));
-    setStatus("Recurring reminder deleted");
+    setDeleting(true);
+    try {
+      const endpoint =
+        deleteTarget.kind === "once"
+          ? `/api/notifications/reminders?id=${deleteTarget.id}`
+          : `/api/notifications/recurring?id=${deleteTarget.id}`;
+
+      const response = await fetch(endpoint, { method: "DELETE" });
+      if (!response.ok) {
+        setStatus("Could not delete");
+        return;
+      }
+
+      if (deleteTarget.kind === "once") {
+        setReminders((prev) =>
+          prev.filter((item) => item._id !== deleteTarget.id),
+        );
+      } else {
+        setRecurring((prev) =>
+          prev.filter((item) => item._id !== deleteTarget.id),
+        );
+      }
+
+      if (editing?.id === deleteTarget.id) {
+        closeSheet();
+      }
+      setDeleteTarget(null);
+      setStatus("Removed");
+    } finally {
+      setDeleting(false);
+    }
   };
 
-  const preview = useMemo(() => {
-    const result: { title: string; date: Date }[] = [];
-    const base = new Date();
-    const totalDays = 7;
-    for (let offset = 0; offset < totalDays; offset += 1) {
-      const date = new Date(base);
-      date.setDate(base.getDate() + offset);
-      const day = date.getDay();
-      recurring.forEach((item) => {
-        if (item.paused) {
-          return;
-        }
-        const matches =
-          item.frequency === "daily" ||
-          (item.frequency === "weekly" && item.daysOfWeek.includes(day));
-        if (!matches) {
-          return;
-        }
-        const [hours, minutes] = item.time.split(":").map(Number);
-        const scheduled = new Date(date);
-        scheduled.setHours(hours || 0, minutes || 0, 0, 0);
-        result.push({ title: item.title, date: scheduled });
-      });
-    }
-    return result.sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [recurring]);
+  const isEmpty = upcomingOnce.length === 0 && recurring.length === 0;
+  const sheetTitle = editing
+    ? editing.kind === "once"
+      ? "Edit reminder"
+      : "Edit repeating"
+    : "Add reminder";
 
   return (
     <div className="grid gap-4">
-      <div className="rounded-3xl border border-border bg-card px-4 py-4">
-        <div className="flex items-center justify-between">
+      <div className="glass-card grid gap-4 p-4">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-foreground">
-              Reminders
-            </div>
-            <div className="text-xs text-muted">
-              {reminders.length} scheduled • {recurring.length} recurring
+            <div className="type-kicker">Nudges</div>
+            <div className="type-title">Reminders</div>
+            <div className="type-meta mt-1">
+              {activeCount === 0
+                ? "Nothing scheduled"
+                : `${activeCount} active`}
             </div>
           </div>
           <button
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-card-strong text-lg text-foreground"
-            onClick={() => setIsOpen(true)}
-            aria-label="Add reminder"
+            type="button"
+            className="openable soft-chip gap-1 text-xs font-semibold text-accent"
+            onClick={openCreate}
           >
-            +
+            Add
+            <OpenHint kind="open" />
           </button>
         </div>
-      </div>
 
-      <AnimatePresence>
-        {isOpen ? (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setIsOpen(false)}
-          >
-            <motion.div
-              className="w-full max-w-3xl rounded-3xl border border-border bg-bg-elevated p-5 shadow-2xl"
-              {...modalMotion}
-              onClick={(event) => event.stopPropagation()}
+        {status ? (
+          <div className="soft-tile px-3 py-2 text-xs text-muted">{status}</div>
+        ) : null}
+
+        {isEmpty ? (
+          <div className="py-8 text-center">
+            <div className="text-sm text-foreground">No reminders yet</div>
+            <div className="mt-1 text-xs text-muted">
+              Set a one-time nudge or a repeating habit check-in.
+            </div>
+            <button
+              type="button"
+              className="mt-4 soft-chip px-4 py-2 text-xs font-semibold text-accent"
+              onClick={openCreate}
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-base font-semibold text-foreground">
-                    All reminders
-                  </div>
-                  <div className="text-xs text-muted">
-                    Review before adding new ones.
-                  </div>
+              Add reminder
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-5">
+            {upcomingOnce.length > 0 ? (
+              <section className="grid gap-2">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                  Upcoming
                 </div>
-                <button
-                  className="rounded-full border border-border px-3 py-1 text-xs text-muted"
-                  onClick={() => setIsOpen(false)}
-                >
-                  Close
-                </button>
-              </div>
-
-              {status ? (
-                <div className="mt-3 rounded-2xl border border-border bg-card px-4 py-2 text-xs text-muted">
-                  {status}
-                </div>
-              ) : null}
-
-              <div className="mt-4 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
-                <div className="grid gap-2">
-                  <div className="text-xs text-muted">Scheduled</div>
-                  {reminders.length === 0 ? (
-                    <div className="text-xs text-muted">
-                      No reminders scheduled.
-                    </div>
-                  ) : (
-                    <div className="grid gap-2">
-                      {reminders.map((reminder) => (
-                        <motion.div
-                          key={reminder._id}
-                          layout
-                          className="rounded-2xl border border-border bg-card px-4 py-3 text-sm"
+                <DataList>
+                  {upcomingOnce.map((reminder) => (
+                    <DataRow
+                      key={reminder._id}
+                      className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm text-foreground">
+                          {reminder.title}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">
+                          <span>{formatWhen(reminder.scheduledFor)}</span>
+                          <SoftChip className="text-[10px] capitalize text-muted">
+                            {reminder.status}
+                          </SoftChip>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          className="soft-chip px-2.5 py-1 text-[11px] text-muted hover:text-foreground"
+                          onClick={() => openEditOnce(reminder)}
                         >
-                          <div className="text-foreground">
-                            {reminder.title}
-                          </div>
-                          <div className="text-xs text-muted">
-                            {new Date(reminder.scheduledFor).toLocaleString()} • {reminder.status}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="soft-chip px-2.5 py-1 text-[11px] text-muted hover:text-accent"
+                          onClick={() =>
+                            setDeleteTarget({
+                              kind: "once",
+                              id: reminder._id,
+                              title: reminder.title,
+                            })
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </DataRow>
+                  ))}
+                </DataList>
+              </section>
+            ) : null}
 
-                <div className="grid gap-2">
-                  <div className="flex items-center justify-between text-xs text-muted">
-                    <span>Recurring</span>
+            {recurring.length > 0 ? (
+              <section className="grid gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                    Repeating
+                  </div>
+                  {recurring.length > 1 ? (
                     <button
-                      className="rounded-full border border-border px-2 py-1 text-[10px]"
-                      onClick={handlePauseAll}
+                      type="button"
+                      className="text-[11px] text-muted hover:text-foreground"
+                      onClick={() => {
+                        void handlePauseAll();
+                      }}
                     >
                       {allPaused ? "Resume all" : "Pause all"}
                     </button>
-                  </div>
-                  {recurring.length === 0 ? (
-                    <div className="text-xs text-muted">
-                      No recurring reminders.
-                    </div>
-                  ) : (
-                    <div className="grid gap-2">
-                      {recurring.map((item) => (
-                        <motion.div
-                          key={item._id}
-                          layout
-                          className="rounded-2xl border border-border bg-card px-4 py-3 text-sm"
+                  ) : null}
+                </div>
+                <DataList>
+                  {recurring.map((item) => (
+                    <DataRow
+                      key={item._id}
+                      className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div
+                          className={`truncate text-sm ${
+                            item.paused
+                              ? "text-muted line-through"
+                              : "text-foreground"
+                          }`}
                         >
-                          <div className="text-foreground">{item.title}</div>
-                          <div className="text-xs text-muted">
-                            {item.frequency} at {item.time}
-                          </div>
-                          <div className="mt-2 flex gap-2">
-                            <button
-                              className="rounded-xl border border-border px-3 py-2 text-xs text-foreground"
-                              onClick={() => handleEditRecurring(item)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="rounded-xl border border-border px-3 py-2 text-xs text-foreground"
-                              onClick={() => handleTogglePaused(item)}
-                            >
-                              {item.paused ? "Resume" : "Pause"}
-                            </button>
-                            <button
-                              className="rounded-xl border border-border px-3 py-2 text-xs text-muted"
-                              onClick={() => handleDeleteRecurring(item._id)}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                          {item.title}
+                        </div>
+                        <div className="mt-0.5 text-xs text-muted">
+                          {formatRecurringMeta(item)}
+                          {item.paused ? " · Paused" : ""}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className="soft-chip px-2.5 py-1 text-[11px] text-muted hover:text-foreground"
+                          onClick={() => openEditRecurring(item)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="soft-chip px-2.5 py-1 text-[11px] text-muted hover:text-foreground"
+                          onClick={() => {
+                            void handleTogglePaused(item);
+                          }}
+                        >
+                          {item.paused ? "Resume" : "Pause"}
+                        </button>
+                        <button
+                          type="button"
+                          className="soft-chip px-2.5 py-1 text-[11px] text-muted hover:text-accent"
+                          onClick={() =>
+                            setDeleteTarget({
+                              kind: "repeat",
+                              id: item._id,
+                              title: item.title,
+                            })
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </DataRow>
+                  ))}
+                </DataList>
+              </section>
+            ) : null}
+          </div>
+        )}
+      </div>
 
-                <div className="grid gap-2">
-                  <div className="text-xs text-muted">Add reminder</div>
-                  <input
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    placeholder="Reminder title"
-                    className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
-                  />
-                  <input
-                    type="datetime-local"
-                    value={scheduledFor}
-                    onChange={(event) => setScheduledFor(event.target.value)}
-                    className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
-                  />
-                  <button
-                    className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
-                    onClick={handleCreateReminder}
-                  >
-                    Schedule reminder
-                  </button>
-                </div>
+      <OverlaySheet
+        open={sheetOpen}
+        onClose={closeSheet}
+        title={sheetTitle}
+        subtitle={
+          editing
+            ? "Change the title or schedule"
+            : "One-time or repeating"
+        }
+      >
+        <div className="grid gap-4">
+          <label className="grid gap-1.5 text-xs text-muted">
+            Title
+            <input
+              value={draft.title}
+              onChange={(event) =>
+                setDraft((prev) => ({ ...prev, title: event.target.value }))
+              }
+              placeholder="Drink water, stretch, prep meals…"
+              className="soft-tile w-full px-3 py-2.5 text-sm text-foreground outline-none"
+              autoFocus
+            />
+          </label>
 
-                <div className="grid gap-2">
-                  <div className="text-xs text-muted">Add recurring</div>
-                  <input
-                    value={recurringTitle}
-                    onChange={(event) => setRecurringTitle(event.target.value)}
-                    placeholder="Recurring title"
-                    className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
-                  />
-                  <input
-                    type="time"
-                    value={recurringTime}
-                    onChange={(event) => setRecurringTime(event.target.value)}
-                    className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
-                  />
-                  <select
-                    value={frequency}
-                    onChange={(event) =>
-                      setFrequency(event.target.value as "daily" | "weekly")
-                    }
-                    className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
-                  >
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                  </select>
-                  {frequency === "weekly" ? (
-                    <div className="grid grid-cols-4 gap-2">
-                      {([
-                        [0, "Sun"],
-                        [1, "Mon"],
-                        [2, "Tue"],
-                        [3, "Wed"],
-                        [4, "Thu"],
-                        [5, "Fri"],
-                        [6, "Sat"],
-                      ] as const).map(([value, label]) => (
+          {!editing ? (
+            <div className="grid gap-1.5">
+              <div className="text-xs text-muted">Type</div>
+              <div className="grid grid-cols-2 gap-1 rounded-xl bg-card-strong/50 p-1">
+                {(
+                  [
+                    ["once", "Once"],
+                    ["repeat", "Repeat"],
+                  ] as const
+                ).map(([id, label]) => {
+                  const active = composeMode === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setComposeMode(id)}
+                      className={`rounded-lg px-3 py-2 text-xs font-medium transition ${
+                        active
+                          ? "bg-accent/15 text-accent"
+                          : "text-muted hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {composeMode === "once" ? (
+            <label className="grid gap-1.5 text-xs text-muted">
+              When
+              <input
+                type="datetime-local"
+                value={draft.scheduledFor}
+                onChange={(event) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    scheduledFor: event.target.value,
+                  }))
+                }
+                className="soft-tile w-full px-3 py-2.5 text-sm text-foreground outline-none"
+              />
+            </label>
+          ) : (
+            <>
+              <label className="grid gap-1.5 text-xs text-muted">
+                Time
+                <input
+                  type="time"
+                  value={draft.time}
+                  onChange={(event) =>
+                    setDraft((prev) => ({ ...prev, time: event.target.value }))
+                  }
+                  className="soft-tile w-full px-3 py-2.5 text-sm text-foreground outline-none"
+                />
+              </label>
+
+              <div className="grid gap-1.5">
+                <div className="text-xs text-muted">Repeat</div>
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-card-strong/50 p-1">
+                  {(
+                    [
+                      ["daily", "Every day"],
+                      ["weekly", "Weekly"],
+                    ] as const
+                  ).map(([id, label]) => {
+                    const active = draft.frequency === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() =>
+                          setDraft((prev) => ({ ...prev, frequency: id }))
+                        }
+                        className={`rounded-lg px-3 py-2 text-xs font-medium transition ${
+                          active
+                            ? "bg-accent/15 text-accent"
+                            : "text-muted hover:text-foreground"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {draft.frequency === "weekly" ? (
+                <div className="grid gap-1.5">
+                  <div className="text-xs text-muted">Days</div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {WEEKDAYS.map(([value, label]) => {
+                      const active = draft.daysOfWeek.includes(value);
+                      return (
                         <button
                           key={value}
-                          className={`rounded-2xl border px-3 py-2 text-xs ${
-                            daysOfWeek.includes(value)
-                              ? "border-accent bg-card-strong text-foreground"
-                              : "border-border bg-card text-muted"
-                          }`}
+                          type="button"
                           onClick={() =>
-                            setDaysOfWeek((prev) =>
-                              prev.includes(value)
-                                ? prev.filter((day) => day !== value)
-                                : [...prev, value],
-                            )
+                            setDraft((prev) => ({
+                              ...prev,
+                              daysOfWeek: prev.daysOfWeek.includes(value)
+                                ? prev.daysOfWeek.filter((day) => day !== value)
+                                : [...prev.daysOfWeek, value],
+                            }))
                           }
+                          className={`rounded-lg py-2 text-[11px] font-medium transition ${
+                            active
+                              ? "bg-accent/15 text-accent"
+                              : "bg-card-strong/40 text-muted"
+                          }`}
+                          aria-pressed={active}
                         >
                           {label}
                         </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  <button
-                    className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground"
-                    onClick={editingId ? handleUpdateRecurring : handleCreateRecurring}
-                  >
-                    {editingId
-                      ? "Update recurring reminder"
-                      : "Create recurring reminder"}
-                  </button>
+                      );
+                    })}
+                  </div>
                 </div>
+              ) : null}
+            </>
+          )}
 
-                <div className="grid gap-2">
-                  <div className="text-xs text-muted">Next 7 days</div>
-                  {preview.length === 0 ? (
-                    <div className="text-xs text-muted">
-                      No upcoming recurring reminders.
-                    </div>
-                  ) : (
-                    preview.map((item, index) => (
-                      <div
-                        key={`${item.title}-${index}`}
-                        className="rounded-2xl border border-border bg-card px-4 py-3 text-sm"
-                      >
-                        <div className="text-foreground">{item.title}</div>
-                        <div className="text-xs text-muted">
-                          {item.date.toLocaleString()}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+          <button
+            type="button"
+            onClick={() => {
+              void handleSave();
+            }}
+            disabled={saving}
+            className="w-full rounded-xl bg-accent/15 px-4 py-2.5 text-xs font-semibold text-accent disabled:opacity-60"
+          >
+            {saving
+              ? "Saving…"
+              : editing
+                ? "Save changes"
+                : composeMode === "once"
+                  ? "Schedule"
+                  : "Set reminder"}
+          </button>
+        </div>
+      </OverlaySheet>
+
+      <OverlaySheet
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete reminder"
+        subtitle="This cannot be undone"
+      >
+        <div className="grid gap-4">
+          <p className="text-sm text-foreground">
+            Remove{" "}
+            <span className="font-semibold">{deleteTarget?.title}</span>?
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              className="rounded-xl bg-card-strong/50 px-4 py-2.5 text-xs font-semibold text-muted"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-xl bg-accent/15 px-4 py-2.5 text-xs font-semibold text-accent disabled:opacity-60"
+              onClick={() => {
+                void confirmDelete();
+              }}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      </OverlaySheet>
     </div>
   );
 }
-
-
-

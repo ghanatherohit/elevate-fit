@@ -1,11 +1,10 @@
 import DashboardShell from "@/components/layout/DashboardShell";
-import ProgressClient from "@/components/progress/ProgressClient";
+import ProgressClientLazy from "@/components/progress/ProgressClientLazy";
 
 export default function ProgressPage() {
   return (
     <DashboardShell>
-      <ProgressClient />
+      <ProgressClientLazy />
     </DashboardShell>
   );
 }
-

@@ -4,121 +4,14 @@ import { requireSession } from "@/lib/auth/session";
 import { RoutineTaskList } from "@/lib/models/RoutineTaskList";
 import { routineItems } from "@/lib/data/routines";
 import { getFirstZodError, routineTasksUpdateSchema } from "@/lib/validation/schemas";
-
-const resolveEndTime = (time: string, endTime?: string) => {
-  if (endTime && endTime.trim()) {
-    return endTime;
-  }
-
-  return time;
-};
-
-type TaskItem = {
-  id: string;
-  time: string;
-  endTime?: string;
-  title: string;
-  highlight?: boolean;
-  type: "recipe" | "workout" | "general";
-  targetId?: string;
-  notes: string;
-  alarmLabel: string;
-};
-
-type TaskItemInput = TaskItem & {
-  meta?: string;
-};
-
-type TasksByDay = {
-  monday: TaskItem[];
-  tuesday: TaskItem[];
-  wednesday: TaskItem[];
-  thursday: TaskItem[];
-  friday: TaskItem[];
-  saturday: TaskItem[];
-  sunday: TaskItem[];
-};
-
-const createEmptyTasksByDay = (): TasksByDay => ({
-  monday: [],
-  tuesday: [],
-  wednesday: [],
-  thursday: [],
-  friday: [],
-  saturday: [],
-  sunday: [],
-});
-
-const sanitizeTask = (task: TaskItemInput): TaskItem => ({
-  id: task.id,
-  time: task.time,
-  endTime: resolveEndTime(task.time, task.endTime),
-  title: task.title,
-  highlight: task.highlight,
-  type: task.type,
-  targetId: task.targetId,
-  notes: task.notes,
-  alarmLabel: task.alarmLabel,
-});
-
-const sanitizeTasksByDay = (tasksByDay: Partial<TasksByDay>): TasksByDay => ({
-  monday: (tasksByDay.monday ?? []).map(sanitizeTask),
-  tuesday: (tasksByDay.tuesday ?? []).map(sanitizeTask),
-  wednesday: (tasksByDay.wednesday ?? []).map(sanitizeTask),
-  thursday: (tasksByDay.thursday ?? []).map(sanitizeTask),
-  friday: (tasksByDay.friday ?? []).map(sanitizeTask),
-  saturday: (tasksByDay.saturday ?? []).map(sanitizeTask),
-  sunday: (tasksByDay.sunday ?? []).map(sanitizeTask),
-});
-
-const classifyTasksByDay = (tasks: TaskItemInput[]): TasksByDay => {
-  const tasksByDay = createEmptyTasksByDay();
-
-  tasks.forEach((task) => {
-    const sanitized = sanitizeTask(task);
-    const meta = task.meta?.toLowerCase() ?? "";
-    if (meta.includes("daily")) {
-      tasksByDay.monday.push(sanitized);
-      tasksByDay.tuesday.push(sanitized);
-      tasksByDay.wednesday.push(sanitized);
-      tasksByDay.thursday.push(sanitized);
-      tasksByDay.friday.push(sanitized);
-      tasksByDay.saturday.push(sanitized);
-      tasksByDay.sunday.push(sanitized);
-    } else if (meta.includes("monday")) {
-      tasksByDay.monday.push(sanitized);
-    } else if (meta.includes("tuesday")) {
-      tasksByDay.tuesday.push(sanitized);
-    } else if (meta.includes("wednesday")) {
-      tasksByDay.wednesday.push(sanitized);
-    } else if (meta.includes("thursday")) {
-      tasksByDay.thursday.push(sanitized);
-    } else if (meta.includes("friday")) {
-      tasksByDay.friday.push(sanitized);
-    } else if (meta.includes("saturday")) {
-      tasksByDay.saturday.push(sanitized);
-    } else if (meta.includes("sunday")) {
-      tasksByDay.sunday.push(sanitized);
-    } else {
-      tasksByDay.monday.push(sanitized);
-      tasksByDay.tuesday.push(sanitized);
-      tasksByDay.wednesday.push(sanitized);
-      tasksByDay.thursday.push(sanitized);
-      tasksByDay.friday.push(sanitized);
-      tasksByDay.saturday.push(sanitized);
-      tasksByDay.sunday.push(sanitized);
-    }
-  });
-
-  return tasksByDay;
-};
-
-const isTasksByDayEmpty = (tasksByDay?: TasksByDay | null) => {
-  if (!tasksByDay) {
-    return true;
-  }
-  return Object.values(tasksByDay).every((day) => day.length === 0);
-};
+import {
+  classifyTasksByDay,
+  createEmptyTasksByDay,
+  isTasksByDayEmpty,
+  resolveEndTime,
+  sanitizeTasksByDay,
+  type RoutineTaskInput,
+} from "@/lib/routine/tasks";
 
 export async function GET() {
   const session = await requireSession();
@@ -131,8 +24,12 @@ export async function GET() {
   const taskList = await RoutineTaskList.findOne({ uid: session.uid }).lean();
 
   if (!taskList || isTasksByDayEmpty(taskList.tasksByDay)) {
-    const rawTaskList = await RoutineTaskList.collection.findOne({ uid: session.uid });
-    const sourceItems = (rawTaskList?.items?.length ? rawTaskList.items : routineItems) as TaskItemInput[];
+    const rawTaskList = await RoutineTaskList.collection.findOne({
+      uid: session.uid,
+    });
+    const sourceItems = (rawTaskList?.items?.length
+      ? rawTaskList.items
+      : routineItems) as RoutineTaskInput[];
     const itemsWithEndTime = sourceItems.map((item) => ({
       ...item,
       endTime: resolveEndTime(item.time, item.endTime),
@@ -200,7 +97,10 @@ export async function DELETE(request: Request) {
   }
 
   if (routineItems.some((item) => item.id === itemId)) {
-    return NextResponse.json({ error: "Default tasks cannot be deleted" }, { status: 403 });
+    return NextResponse.json(
+      { error: "Default tasks cannot be deleted" },
+      { status: 403 },
+    );
   }
 
   await connectToDatabase();
@@ -222,17 +122,7 @@ export async function DELETE(request: Request) {
   );
 
   if (!taskList) {
-    return NextResponse.json({
-      tasksByDay: {
-        monday: [],
-        tuesday: [],
-        wednesday: [],
-        thursday: [],
-        friday: [],
-        saturday: [],
-        sunday: [],
-      },
-    });
+    return NextResponse.json({ tasksByDay: createEmptyTasksByDay() });
   }
 
   return NextResponse.json({ tasksByDay: taskList.tasksByDay });
