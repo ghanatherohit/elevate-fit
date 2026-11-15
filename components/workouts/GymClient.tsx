@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import Image from "next/image";
 import { useState } from "react";
 import {
   TypeBody,
@@ -9,6 +10,9 @@ import {
   TypeTitle,
 } from "@/components/shared/DataSurfaces";
 import SectionHeader from "@/components/shared/SectionHeader";
+
+/** External anatomy refs use many hosts — skip Next image optimization CDN. */
+const atlasImageLoader = ({ src }: { src: string }) => src;
 
 type TableBlock = {
   id: string;
@@ -1279,12 +1283,15 @@ export default function GymClient() {
               {activeAtlas.images ? (
                 <div className="grid gap-2 sm:grid-cols-2">
                   {activeAtlas.images.map((image) => (
-                    <img
+                    <Image
                       key={image.src}
+                      loader={atlasImageLoader}
                       src={image.src}
                       alt={image.alt}
+                      width={800}
+                      height={352}
                       className="h-36 w-full rounded-xl object-cover sm:h-44"
-                      loading="lazy"
+                      unoptimized
                     />
                   ))}
                 </div>
