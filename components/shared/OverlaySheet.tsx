@@ -1,9 +1,10 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayLock } from "@/components/shared/OverlayLock";
+import { useIsClient } from "@/components/shared/useIsClient";
 
 type OverlaySheetProps = {
   open: boolean;
@@ -42,14 +43,10 @@ export default function OverlaySheet({
   closeOnBackdrop = true,
   showClose = true,
 }: OverlaySheetProps) {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsClient();
   const maxWidth = size === "lg" ? "max-w-3xl" : "max-w-md";
 
   useOverlayLock(open);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     if (!open) {

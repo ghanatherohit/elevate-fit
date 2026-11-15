@@ -171,74 +171,90 @@ export default function HomeClient() {
     else if (hour < 18) setGreeting("Good afternoon");
     else setGreeting("Good evening");
 
-    fetchDashboardData();
-  }, []);
+    let cancelled = false;
 
-  const fetchDashboardData = async () => {
-    try {
-      const response = await fetch("/api/dashboard", { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error("Failed to load dashboard");
-      }
-      const payload = await response.json();
+    const loadDashboard = async () => {
+      try {
+        const response = await fetch("/api/dashboard", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Failed to load dashboard");
+        }
+        const payload = await response.json();
+        if (cancelled) {
+          return;
+        }
 
-      const tasksSorted = [...(payload.todayTasks || [])].sort(
-        (a: { time: string }, b: { time: string }) =>
-          toMinutes(a.time) - toMinutes(b.time),
-      );
+        const tasksSorted = [...(payload.todayTasks || [])].sort(
+          (a: { time: string }, b: { time: string }) =>
+            toMinutes(a.time) - toMinutes(b.time),
+        );
 
-      const nextWorkoutTask = tasksSorted.find(
-        (task: { type: string; completed: boolean; targetId?: string; title: string }) =>
-          task.type === "workout" && !task.completed,
-      );
+        const nextWorkoutTask = tasksSorted.find(
+          (task: {
+            type: string;
+            completed: boolean;
+            targetId?: string;
+            title: string;
+          }) => task.type === "workout" && !task.completed,
+        );
 
-      setData({
-        user: payload.user,
-        todayTasks: tasksSorted,
-        dietPlan: payload.dietPlan || {
-          breakfast: null,
-          lunch: null,
-          dinner: null,
-          totalCalories: 0,
-          totalProtein: 0,
-        },
-        weeklyProgress: payload.weeklyProgress || {
-          completed: 0,
-          total: 0,
-          percent: 0,
-        },
-        nextWorkout: nextWorkoutTask
-          ? {
-              id: nextWorkoutTask.targetId || nextWorkoutTask.id,
-              title: nextWorkoutTask.title,
-              focus: "Workout",
-              duration: "",
-            }
-          : payload.nextWorkout
+        setData({
+          user: payload.user,
+          todayTasks: tasksSorted,
+          dietPlan: payload.dietPlan || {
+            breakfast: null,
+            lunch: null,
+            dinner: null,
+            totalCalories: 0,
+            totalProtein: 0,
+          },
+          weeklyProgress: payload.weeklyProgress || {
+            completed: 0,
+            total: 0,
+            percent: 0,
+          },
+          nextWorkout: nextWorkoutTask
             ? {
-                id: payload.nextWorkout.targetId || payload.nextWorkout.id,
-                title: payload.nextWorkout.title,
+                id: nextWorkoutTask.targetId || nextWorkoutTask.id,
+                title: nextWorkoutTask.title,
                 focus: "Workout",
                 duration: "",
               }
-            : null,
-        streakDays: payload.streakDays ?? 0,
-        todayStats: payload.todayStats || {
-          tasks: { done: 0, total: 0 },
-          meals: { planned: 0 },
-          water: { current: 0, goal: 8 },
-        },
-      });
-    } catch (error) {
-      console.error("Error fetching dashboard data:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+            : payload.nextWorkout
+              ? {
+                  id: payload.nextWorkout.targetId || payload.nextWorkout.id,
+                  title: payload.nextWorkout.title,
+                  focus: "Workout",
+                  duration: "",
+                }
+              : null,
+          streakDays: payload.streakDays ?? 0,
+          todayStats: payload.todayStats || {
+            tasks: { done: 0, total: 0 },
+            meals: { planned: 0 },
+            water: { current: 0, goal: 8 },
+          },
+        });
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadDashboard();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleLogout = async () => {
+    setLogoutError(null);
     const ok = await logoutClient();
     if (!ok) {
+      setLogoutError("Couldn’t sign out. Try again.");
       return;
     }
     router.push("/welcome");

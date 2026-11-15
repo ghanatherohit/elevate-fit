@@ -247,7 +247,7 @@ export default function ProfileClient() {
               <button
                 type="button"
                 className="soft-chip type-meta"
-                aria-selected={usingGoogle}
+                aria-pressed={usingGoogle}
                 onClick={handleUseGooglePhoto}
               >
                 Use Google

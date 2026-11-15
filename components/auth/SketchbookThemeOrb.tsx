@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useUiStyle } from "@/components/layout/ThemeProvider";
 import { UI_STYLES, type UiStyleId } from "@/lib/theme/styles";
 
@@ -9,12 +9,15 @@ export default function SketchbookThemeOrb() {
   const { styleId, setStyle, meta } = useUiStyle();
   const [open, setOpen] = useState(false);
   const [focusedId, setFocusedId] = useState<UiStyleId>(styleId);
+  /** When closed, highlight tracks the live theme; when open, local focus wins. */
+  const highlightId = open ? focusedId : styleId;
 
-  useEffect(() => {
+  const toggleOpen = () => {
     if (!open) {
       setFocusedId(styleId);
     }
-  }, [styleId, open]);
+    setOpen(!open);
+  };
 
   const commitTheme = (id: UiStyleId) => {
     setFocusedId(id);
@@ -27,7 +30,7 @@ export default function SketchbookThemeOrb() {
         type="button"
         aria-label={open ? "Close theme sketchbook" : "Open theme sketchbook"}
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggleOpen}
         className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-border shadow-[var(--shadow)]"
         style={{
           background: `conic-gradient(from 210deg, ${meta.preview.accent}, ${meta.preview.accent2}, ${meta.preview.card}, ${meta.preview.accent})`,
@@ -119,7 +122,7 @@ export default function SketchbookThemeOrb() {
 
                   <div className="themed-scroll relative max-h-[min(54vh,400px)] space-y-1 overflow-y-auto px-3 py-3 pl-7">
                     {UI_STYLES.map((style) => {
-                      const active = focusedId === style.id;
+                      const active = highlightId === style.id;
                       return (
                         <button
                           key={style.id}

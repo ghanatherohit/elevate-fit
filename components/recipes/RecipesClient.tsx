@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { useIsClient } from "@/components/shared/useIsClient";
 import GlassCard from "@/components/shared/GlassCard";
 import {
   DataList,
@@ -1371,13 +1372,9 @@ function RecipeModal({
 }) {
   const n = recipe.nutrition;
   const [showMore, setShowMore] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsClient();
 
   useOverlayLock(true);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;

@@ -336,7 +336,7 @@ export default function ProgressClient() {
       });
     }
     return list;
-  }, [tasksByDay, completionByDate, range, todayDate, todayKey, collectRangeTotals]);
+  }, [tasksByDay, completionByDate, range, todayDate, collectRangeTotals]);
 
   useEffect(() => {
     if (!points.length) {
