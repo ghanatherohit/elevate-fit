@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { verifySession } from "@/lib/auth/jwt";
+import { requireSession } from "@/lib/auth/session";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { calculateDietTargets } from "@/lib/diet/planner";
 import { User } from "@/lib/models/User";
@@ -12,31 +11,15 @@ import {
 const unauthorized = () =>
   NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-const getSessionUid = async () => {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("ef_session")?.value;
-
-  if (!token) {
-    return null;
-  }
-
-  try {
-    const payload = verifySession(token);
-    return payload.uid;
-  } catch {
-    return null;
-  }
-};
-
 export async function GET() {
   try {
-    const uid = await getSessionUid();
-    if (!uid) {
+    const session = await requireSession();
+    if (!session) {
       return unauthorized();
     }
 
     await connectToDatabase();
-    const user = await User.findOne({ uid }).select(
+    const user = await User.findOne({ uid: session.uid }).select(
       "dietProfile dietTargets dietProfileCompletedAt",
     );
 
@@ -52,13 +35,11 @@ export async function GET() {
       onboardingRequired: !hasDietProfile,
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to load diet profile";
+    console.error("[profile/diet GET]", error);
     return NextResponse.json(
       {
         error:
-          "Diet profile service is temporarily unavailable. Please check your database connection and try again.",
-        details: message,
+          "Diet profile service is temporarily unavailable. Please try again shortly.",
       },
       { status: 503 },
     );
@@ -67,8 +48,8 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
-    const uid = await getSessionUid();
-    if (!uid) {
+    const session = await requireSession();
+    if (!session) {
       return unauthorized();
     }
 
@@ -95,7 +76,7 @@ export async function PUT(request: Request) {
 
     await connectToDatabase();
     const updatedUser = await User.findOneAndUpdate(
-      { uid },
+      { uid: session.uid },
       {
         dietProfile: profile,
         dietTargets: targets,
@@ -115,13 +96,11 @@ export async function PUT(request: Request) {
       onboardingRequired: false,
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to save diet profile";
+    console.error("[profile/diet PUT]", error);
     return NextResponse.json(
       {
         error:
-          "Diet profile service is temporarily unavailable. Please check your database connection and try again.",
-        details: message,
+          "Diet profile service is temporarily unavailable. Please try again shortly.",
       },
       { status: 503 },
     );

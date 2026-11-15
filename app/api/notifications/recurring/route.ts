@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { requireSession } from "@/lib/auth/session";
 import { RecurringReminder } from "@/lib/models/RecurringReminder";
+import {
+  getFirstZodError,
+  recurringReminderCreateSchema,
+  recurringReminderUpdateSchema,
+} from "@/lib/validation/schemas";
 
 export async function GET() {
   const session = await requireSession();
@@ -24,19 +29,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { title, frequency, time, daysOfWeek, channels } =
-    (await request.json()) as {
-      title?: string;
-      frequency?: "daily" | "weekly";
-      time?: string;
-      daysOfWeek?: number[];
-      paused?: boolean;
-      channels?: { email?: boolean; push?: boolean; sms?: boolean };
-    };
-
-  if (!title || !frequency || !time) {
-    return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  const payload = recurringReminderCreateSchema.safeParse(await request.json());
+  if (!payload.success) {
+    return NextResponse.json(
+      { error: getFirstZodError(payload.error) },
+      { status: 400 },
+    );
   }
+
+  const { title, frequency, time, daysOfWeek, channels } = payload.data;
 
   await connectToDatabase();
 
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
     channels: {
       email: channels?.email ?? true,
       push: channels?.push ?? false,
-      sms: channels?.sms ?? false,
+      sms: false,
     },
   });
 
@@ -63,38 +64,36 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id, title, frequency, time, daysOfWeek, channels, paused } =
-    (await request.json()) as {
-      id?: string;
-      title?: string;
-      frequency?: "daily" | "weekly";
-      time?: string;
-      daysOfWeek?: number[];
-      paused?: boolean;
-      channels?: { email?: boolean; push?: boolean; sms?: boolean };
-    };
-
-  if (!id) {
-    return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  const payload = recurringReminderUpdateSchema.safeParse(await request.json());
+  if (!payload.success) {
+    return NextResponse.json(
+      { error: getFirstZodError(payload.error) },
+      { status: 400 },
+    );
   }
+
+  const { id, title, frequency, time, daysOfWeek, channels, paused } =
+    payload.data;
 
   await connectToDatabase();
 
   const recurring = await RecurringReminder.findOneAndUpdate(
     { _id: id, uid: session.uid },
     {
-      title,
-      frequency,
-      time,
-      paused,
-      daysOfWeek: Array.isArray(daysOfWeek) ? daysOfWeek : undefined,
-      channels: channels
+      ...(title !== undefined ? { title } : {}),
+      ...(frequency !== undefined ? { frequency } : {}),
+      ...(time !== undefined ? { time } : {}),
+      ...(paused !== undefined ? { paused } : {}),
+      ...(Array.isArray(daysOfWeek) ? { daysOfWeek } : {}),
+      ...(channels
         ? {
-            email: channels.email ?? true,
-            push: channels.push ?? false,
-            sms: channels.sms ?? false,
+            channels: {
+              email: channels.email ?? true,
+              push: channels.push ?? false,
+              sms: false,
+            },
           }
-        : undefined,
+        : {}),
     },
     { new: true },
   );
@@ -121,7 +120,10 @@ export async function DELETE(request: Request) {
 
   await connectToDatabase();
 
-  const result = await RecurringReminder.deleteOne({ _id: id, uid: session.uid });
+  const result = await RecurringReminder.deleteOne({
+    _id: id,
+    uid: session.uid,
+  });
 
   if (result.deletedCount === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -21,7 +21,11 @@ const RecurringReminderSchema = new Schema<RecurringReminderDocument>(
   {
     uid: { type: String, required: true },
     title: { type: String, required: true },
-    frequency: { type: String, required: true },
+    frequency: {
+      type: String,
+      required: true,
+      enum: ["daily", "weekly"],
+    },
     time: { type: String, required: true },
     daysOfWeek: { type: [Number], default: [] },
     paused: { type: Boolean, default: false },
@@ -34,6 +38,9 @@ const RecurringReminderSchema = new Schema<RecurringReminderDocument>(
   },
   { timestamps: true },
 );
+
+RecurringReminderSchema.index({ paused: 1, frequency: 1 });
+RecurringReminderSchema.index({ uid: 1 });
 
 export const RecurringReminder =
   mongoose.models.RecurringReminder ||

@@ -9,7 +9,7 @@ type ReminderDocument = {
     push: boolean;
     sms: boolean;
   };
-  status: "pending" | "sent" | "failed";
+  status: "pending" | "sent" | "failed" | "skipped";
   createdAt: Date;
   updatedAt: Date;
 };
@@ -24,10 +24,18 @@ const ReminderSchema = new Schema<ReminderDocument>(
       push: { type: Boolean, default: false },
       sms: { type: Boolean, default: false },
     },
-    status: { type: String, default: "pending" },
+    status: {
+      type: String,
+      enum: ["pending", "sent", "failed", "skipped"],
+      default: "pending",
+    },
   },
   { timestamps: true },
 );
 
+ReminderSchema.index({ status: 1, scheduledFor: 1 });
+ReminderSchema.index({ uid: 1, scheduledFor: 1 });
+
 export const Reminder =
-  mongoose.models.Reminder || mongoose.model<ReminderDocument>("Reminder", ReminderSchema);
+  mongoose.models.Reminder ||
+  mongoose.model<ReminderDocument>("Reminder", ReminderSchema);

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { verifySession } from "@/lib/auth/jwt";
+import { requireSession } from "@/lib/auth/session";
 import { buildDailyDietPlan } from "@/lib/diet/planner";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { recipes } from "@/lib/data/recipes";
@@ -8,24 +7,16 @@ import { User } from "@/lib/models/User";
 
 export async function GET() {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get("ef_session")?.value;
-
-    if (!token) {
+    const session = await requireSession();
+    if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    let uid = "";
-    try {
-      const payload = verifySession(token);
-      uid = payload.uid;
-    } catch {
-      return NextResponse.json({ error: "Invalid session" }, { status: 401 });
     }
 
     await connectToDatabase();
 
-    const user = await User.findOne({ uid }).select("dietTargets dietProfile");
+    const user = await User.findOne({ uid: session.uid }).select(
+      "dietTargets dietProfile",
+    );
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
@@ -63,19 +54,19 @@ export async function GET() {
         plannedProteinG: plan.totalPlannedProteinG,
         targetCalories: Math.round(user.dietTargets.targetCalories),
         targetProteinG: Math.round(user.dietTargets.proteinG),
-        calorieGap: Math.round(user.dietTargets.targetCalories) - plan.totalPlannedCalories,
-        proteinGap: Math.round(user.dietTargets.proteinG) - plan.totalPlannedProteinG,
+        calorieGap:
+          Math.round(user.dietTargets.targetCalories) -
+          plan.totalPlannedCalories,
+        proteinGap:
+          Math.round(user.dietTargets.proteinG) - plan.totalPlannedProteinG,
       },
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to load daily diet plan";
-
+    console.error("[diet/daily]", error);
     return NextResponse.json(
       {
         error:
-          "Diet service is temporarily unavailable. Please check your database connection and try again.",
-        details: message,
+          "Diet service is temporarily unavailable. Please try again shortly.",
       },
       { status: 503 },
     );

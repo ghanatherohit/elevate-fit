@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { requireSession } from "@/lib/auth/session";
 import { NotificationSubscription } from "@/lib/models/NotificationSubscription";
+import {
+  getFirstZodError,
+  pushSubscriptionSchema,
+} from "@/lib/validation/schemas";
 
 export async function POST(request: Request) {
   const session = await requireSession();
@@ -9,14 +13,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const subscription = (await request.json()) as {
-    endpoint?: string;
-    keys?: { p256dh?: string; auth?: string };
-  };
-
-  if (!subscription.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
-    return NextResponse.json({ error: "Invalid subscription" }, { status: 400 });
+  const payload = pushSubscriptionSchema.safeParse(await request.json());
+  if (!payload.success) {
+    return NextResponse.json(
+      { error: getFirstZodError(payload.error) },
+      { status: 400 },
+    );
   }
+
+  const subscription = payload.data;
 
   await connectToDatabase();
 
