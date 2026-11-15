@@ -6,6 +6,10 @@ type UserDocument = {
   email?: string | null;
   name?: string | null;
   photoURL?: string | null;
+  /** Bumped on logout-all / password change to invalidate JWTs. */
+  sessionVersion?: number;
+  /** Bumped when diet formula constants change; triggers target recompute. */
+  dietFormulaVersion?: number;
   dietProfile?: {
     age: number;
     sex: "male" | "female";
@@ -36,6 +40,8 @@ const UserSchema = new Schema<UserDocument>(
     email: { type: String, unique: true, sparse: true },
     name: { type: String },
     photoURL: { type: String },
+    sessionVersion: { type: Number, default: 1 },
+    dietFormulaVersion: { type: Number, default: 1 },
     dietProfile: {
       type: {
         age: { type: Number },
