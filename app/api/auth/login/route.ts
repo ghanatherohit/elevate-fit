@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { User } from "@/lib/models/User";
-import { signSession } from "@/lib/auth/jwt";
-import { SESSION_MAX_AGE_SECONDS } from "@/lib/auth/session";
 import { normalizeUsername } from "@/lib/validation/username";
 import {
   getFirstZodError,
@@ -11,8 +8,14 @@ import {
 } from "@/lib/validation/schemas";
 import { allowRequest, clientIp } from "@/lib/security/rate-limit";
 import { adminAuth } from "@/lib/auth/firebase-admin";
+import { authFailureResponse } from "@/lib/auth/auth-errors";
+import { getMongoDuplicateKey } from "@/lib/auth/mongo-errors";
+import { attachSessionCookie } from "@/lib/auth/session-cookie";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 
-const INVALID = { error: "Invalid credentials" } as const;
+export const dynamic = "force-dynamic";
+
+const INVALID = { error: USER_ERRORS.invalidCredentials } as const;
 
 async function resolveEmail(identifier: string) {
   if (identifier.includes("@")) {
@@ -67,7 +70,7 @@ export async function POST(request: Request) {
     });
     if (!allowed) {
       return NextResponse.json(
-        { error: "Too many attempts. Try again shortly." },
+        { error: USER_ERRORS.rateLimit },
         { status: 429 },
       );
     }
@@ -96,41 +99,46 @@ export async function POST(request: Request) {
     const decoded = await adminAuth.verifyIdToken(firebaseSession.idToken);
     await connectToDatabase();
 
-    const user = await User.findOneAndUpdate(
-      { uid: decoded.uid },
-      {
-        $set: {
-          uid: decoded.uid,
-          email: decoded.email ?? email,
-          name: decoded.name,
-          ...(decoded.picture ? { photoURL: decoded.picture } : {}),
+    let user;
+    try {
+      user = await User.findOneAndUpdate(
+        { uid: decoded.uid },
+        {
+          $set: {
+            uid: decoded.uid,
+            email: (decoded.email ?? email).trim().toLowerCase(),
+            ...(typeof decoded.name === "string" && decoded.name.trim()
+              ? { name: decoded.name.trim() }
+              : {}),
+            ...(decoded.picture ? { photoURL: decoded.picture } : {}),
+          },
+          $setOnInsert: { sessionVersion: 1, dietFormulaVersion: 1 },
         },
-        $setOnInsert: { sessionVersion: 1, dietFormulaVersion: 1 },
-      },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
-    );
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      );
+    } catch (error) {
+      const duplicate = getMongoDuplicateKey(error);
+      if (duplicate) {
+        return NextResponse.json(
+          {
+            error: duplicate.fields.includes("email")
+              ? USER_ERRORS.emailInUse
+              : USER_ERRORS.usernameInUse,
+          },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
 
-    const token = signSession({
-      uid: user.uid,
-      username: user.username,
-      email: user.email,
-      name: user.name,
-      photoURL: user.photoURL,
-      sessionVersion: user.sessionVersion ?? 1,
-    });
+    if (!user) {
+      throw new Error("Unable to create user session");
+    }
 
-    const cookieStore = await cookies();
-    cookieStore.set("ef_session", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: SESSION_MAX_AGE_SECONDS,
-    });
-
-    return NextResponse.json({ user });
+    const publicUser = await attachSessionCookie(user);
+    return NextResponse.json({ user: publicUser });
   } catch (error) {
     console.error("[auth/login]", error);
-    return NextResponse.json({ error: "Login failed" }, { status: 500 });
+    return authFailureResponse(error, { fallback: USER_ERRORS.signInFailed });
   }
 }

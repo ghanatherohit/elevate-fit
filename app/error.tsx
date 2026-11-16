@@ -1,7 +1,8 @@
 "use client";
 
+import { USER_ERRORS } from "@/lib/errors/user-facing";
+
 export default function Error({
-  error,
   reset,
 }: {
   error: Error & { digest?: string };
@@ -14,7 +15,7 @@ export default function Error({
           Something went wrong
         </div>
         <div className="text-xs text-muted" role="alert">
-          {error.message || "An unexpected error occurred."}
+          {USER_ERRORS.pageCrash}
         </div>
         <button
           type="button"

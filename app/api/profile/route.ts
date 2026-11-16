@@ -1,4 +1,12 @@
 import { NextResponse } from "next/server";
+import {
+  apiError,
+  apiNotFound,
+  apiUnauthorized,
+  apiUnavailable,
+  withApiHandler,
+} from "@/lib/api/response";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 import { cookies } from "next/headers";
 import { signSession } from "@/lib/auth/jwt";
 import {
@@ -12,97 +20,96 @@ import {
   profileUpdateSchema,
 } from "@/lib/validation/schemas";
 import { normalizeUsername } from "@/lib/validation/username";
+import { toPublicUser } from "@/lib/auth/session-cookie";
 
 export async function PATCH(request: Request) {
-  const session = await requireSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  return withApiHandler("[profile]", async () => {
+    const session = await requireSession();
+    if (!session) {
+      return apiUnauthorized();
+    }
 
-  const payloadData = profileUpdateSchema.safeParse(await request.json());
-  if (!payloadData.success) {
-    return NextResponse.json(
-      { error: getFirstZodError(payloadData.error) },
-      { status: 400 },
-    );
-  }
-
-  const { username, name, photoURL } = payloadData.data;
-
-  await connectToDatabase();
-
-  const currentUser = await User.findOne({ uid: session.uid });
-  if (!currentUser) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
-
-  const normalizedUsername = username
-    ? normalizeUsername(username)
-    : undefined;
-
-  // Username is chosen once at registration and cannot be changed later.
-  if (
-    currentUser.username &&
-    normalizedUsername &&
-    normalizedUsername !== currentUser.username
-  ) {
-    return NextResponse.json(
-      { error: "Username cannot be changed after registration." },
-      { status: 400 },
-    );
-  }
-
-  if (!currentUser.username && normalizedUsername) {
-    const existing = await User.findOne({
-      username: normalizedUsername,
-      uid: { $ne: session.uid },
-    });
-    if (existing) {
-      return NextResponse.json(
-        { error: "Username already in use" },
-        { status: 409 },
+    const payloadData = profileUpdateSchema.safeParse(await request.json());
+    if (!payloadData.success) {
+      return apiError(
+        getFirstZodError(payloadData.error) || USER_ERRORS.invalidPayload,
+        400,
       );
     }
-  }
 
-  const update: Record<string, unknown> = {};
-  if (!currentUser.username && normalizedUsername) {
-    update.username = normalizedUsername;
-  }
-  if (name !== undefined) {
-    update.name = name;
-  }
-  if (photoURL !== undefined) {
-    update.photoURL = photoURL;
-  }
+    const { username, name, photoURL } = payloadData.data;
 
-  const user = await User.findOneAndUpdate(
-    { uid: session.uid },
-    update,
-    { new: true },
-  );
+    await connectToDatabase();
 
-  if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
+    const currentUser = await User.findOne({ uid: session.uid });
+    if (!currentUser) {
+      return apiNotFound(USER_ERRORS.userNotFound);
+    }
 
-  const nextToken = signSession({
-    uid: user.uid,
-    username: user.username,
-    email: user.email,
-    name: user.name,
-    photoURL: user.photoURL,
-    sessionVersion: user.sessionVersion ?? 1,
+    const normalizedUsername = username
+      ? normalizeUsername(username)
+      : undefined;
+
+    // Username is chosen once at registration and cannot be changed later.
+    if (
+      currentUser.username &&
+      normalizedUsername &&
+      normalizedUsername !== currentUser.username
+    ) {
+      return apiError(USER_ERRORS.usernameLocked, 400);
+    }
+
+    if (!currentUser.username && normalizedUsername) {
+      const existing = await User.findOne({
+        username: normalizedUsername,
+        uid: { $ne: session.uid },
+      });
+      if (existing) {
+        return apiError(USER_ERRORS.usernameInUse, 409);
+      }
+    }
+
+    const update: Record<string, unknown> = {};
+    if (!currentUser.username && normalizedUsername) {
+      update.username = normalizedUsername;
+    }
+    if (name !== undefined) {
+      update.name = name;
+    }
+    if (photoURL !== undefined) {
+      update.photoURL = photoURL;
+    }
+
+    const user = await User.findOneAndUpdate(
+      { uid: session.uid },
+      update,
+      { new: true },
+    );
+
+    if (!user) {
+      return apiNotFound(USER_ERRORS.userNotFound);
+    }
+
+    const publicUser = toPublicUser(user);
+
+    const nextToken = signSession({
+      uid: publicUser.uid,
+      username: publicUser.username,
+      email: publicUser.email,
+      name: publicUser.name,
+      photoURL: publicUser.photoURL,
+      sessionVersion: publicUser.sessionVersion,
+    });
+
+    const cookieStore = await cookies();
+    cookieStore.set("ef_session", nextToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: SESSION_MAX_AGE_SECONDS,
+    });
+
+    return NextResponse.json({ user: publicUser });
   });
-
-  const cookieStore = await cookies();
-  cookieStore.set("ef_session", nextToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: SESSION_MAX_AGE_SECONDS,
-  });
-
-  return NextResponse.json({ user });
 }

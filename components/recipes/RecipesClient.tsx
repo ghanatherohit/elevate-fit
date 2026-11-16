@@ -28,6 +28,11 @@ import {
   type Goal,
   type Sex,
 } from "@/lib/diet/planner";
+import {
+  messageForStatus,
+  toUserMessage,
+  USER_ERRORS,
+} from "@/lib/errors/user-facing";
 
 const container = {
   hidden: { opacity: 0, y: 8 },
@@ -288,7 +293,12 @@ export default function RecipesClient() {
         const data = await parseJsonSafe<DietProfileApiResponse>(response);
 
         if (!response.ok) {
-          throw new Error(data?.error || "Failed to load diet profile");
+          throw new Error(
+            toUserMessage(
+              data?.error,
+              messageForStatus(response.status, USER_ERRORS.dietLoadFailed),
+            ),
+          );
         }
 
         if (cancelled) {
@@ -305,7 +315,7 @@ export default function RecipesClient() {
         }
       } catch (error) {
         if (!cancelled) {
-          const message = error instanceof Error ? error.message : "Failed to load diet profile";
+          const message = toUserMessage(error, USER_ERRORS.dietLoadFailed);
           const cachedProfileRaw = localStorage.getItem(dietProfileCacheKey);
           const cachedTargetsRaw = localStorage.getItem(dietTargetsCacheKey);
 
@@ -349,9 +359,12 @@ export default function RecipesClient() {
         const response = await fetch("/api/diet/daily", { cache: "no-store" });
         const data = await parseJsonSafe<DailyDietResponse>(response);
         if (!response.ok) {
-          if (data?.error) {
-            setProfileError(data.error);
-          }
+          setProfileError(
+            toUserMessage(
+              data?.error,
+              messageForStatus(response.status, USER_ERRORS.dietLoadFailed),
+            ),
+          );
           return;
         }
 
@@ -562,7 +575,12 @@ export default function RecipesClient() {
 
       const data = await parseJsonSafe<DietProfileApiResponse>(response);
       if (!response.ok) {
-        throw new Error(data?.error || "Failed to sync diet profile");
+        throw new Error(
+          toUserMessage(
+            data?.error,
+            messageForStatus(response.status, USER_ERRORS.dietSaveFailed),
+          ),
+        );
       }
 
       if (data?.targets) {
@@ -580,9 +598,9 @@ export default function RecipesClient() {
         showToast("success", "Saved locally. Server sync pending.");
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to sync diet profile";
-      setProfileError(`Saved locally. ${message}`);
-      showToast("success", "Saved locally. Server unavailable.");
+      const message = toUserMessage(error, USER_ERRORS.dietSaveFailed);
+      setProfileError(message);
+      showToast("success", USER_ERRORS.dietSaveFailed);
     } finally {
       setSavingProfile(false);
     }

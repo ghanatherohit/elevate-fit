@@ -41,11 +41,17 @@ const optionalPhotoUrl = z.preprocess(
 );
 
 export const authResolveSchema = z.object({
-  identifier: z.string().trim().min(1, "Missing identifier"),
+  identifier: z
+    .string()
+    .trim()
+    .min(1, "Enter your email or username."),
 });
 
 export const sessionRequestSchema = z.object({
-  idToken: z.string().trim().min(1, "Missing idToken"),
+  idToken: z
+    .string()
+    .trim()
+    .min(1, "Sign-in expired. Please try again."),
   username: optionalNonEmptyUsername,
 });
 
@@ -226,5 +232,5 @@ export const weeklyProgramPreferenceUpdateSchema = z.object({
 });
 
 export const getFirstZodError = (error: z.ZodError) => {
-  return error.issues[0]?.message || "Invalid input";
+  return error.issues[0]?.message || "Please check your input and try again.";
 };
