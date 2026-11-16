@@ -8,6 +8,10 @@ import {
   SoftChip,
 } from "@/components/shared/DataSurfaces";
 import OverlaySheet from "@/components/shared/OverlaySheet";
+import {
+  USER_ERRORS,
+  userMessageFromResponse,
+} from "@/lib/errors/user-facing";
 
 type Preference = {
   email: boolean;
@@ -237,8 +241,12 @@ export default function RemindersPanel() {
           });
 
           if (!response.ok) {
-            const body = (await response.json()) as { error?: string };
-            setStatus(body.error || "Could not update");
+            setStatus(
+              await userMessageFromResponse(
+                response,
+                USER_ERRORS.reminderFailed,
+              ),
+            );
             return;
           }
 
@@ -264,8 +272,12 @@ export default function RemindersPanel() {
         });
 
         if (!response.ok) {
-          const body = (await response.json()) as { error?: string };
-          setStatus(body.error || "Could not schedule");
+          setStatus(
+            await userMessageFromResponse(
+              response,
+              USER_ERRORS.reminderFailed,
+            ),
+          );
           return;
         }
 
@@ -295,8 +307,12 @@ export default function RemindersPanel() {
         });
 
         if (!response.ok) {
-          const body = (await response.json()) as { error?: string };
-          setStatus(body.error || "Could not update");
+          setStatus(
+            await userMessageFromResponse(
+              response,
+              USER_ERRORS.reminderFailed,
+            ),
+          );
           return;
         }
 
@@ -324,8 +340,12 @@ export default function RemindersPanel() {
       });
 
       if (!response.ok) {
-        const body = (await response.json()) as { error?: string };
-        setStatus(body.error || "Could not create");
+        setStatus(
+          await userMessageFromResponse(
+            response,
+            USER_ERRORS.reminderFailed,
+          ),
+        );
         return;
       }
 

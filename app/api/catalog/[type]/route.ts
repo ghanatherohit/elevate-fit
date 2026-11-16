@@ -1,3 +1,4 @@
+import { apiNotFound } from "@/lib/api/response";
 import { NextResponse } from "next/server";
 import { recipes } from "@/lib/data/recipes";
 import { workouts } from "@/lib/data/workouts";
@@ -17,7 +18,7 @@ export async function GET(
 ) {
   const { type } = await context.params;
   if (!(type in catalogs)) {
-    return NextResponse.json({ error: "Unknown catalog" }, { status: 404 });
+    return apiNotFound();
   }
 
   const key = type as CatalogType;

@@ -14,12 +14,12 @@ import {
   loginWithEmail,
   loginWithGoogle,
 } from "@/lib/auth/client";
+import {
+  toUserMessage,
+  userMessageFromResponse,
+  USER_ERRORS,
+} from "@/lib/errors/user-facing";
 import { getFirstZodError, loginInputSchema } from "@/lib/validation/schemas";
-
-type SessionResponse = {
-  error?: string;
-  user?: unknown;
-};
 
 type MeResponse = {
   user: unknown | null;
@@ -110,25 +110,35 @@ export default function LoginPage() {
   };
 
   const startSession = async (idToken: string) => {
-    const session = await fetch("/api/auth/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken }),
-    });
+    let session: Response;
+    try {
+      session = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      });
+    } catch {
+      throw new Error(USER_ERRORS.network);
+    }
 
     if (!session.ok) {
-      const body = await parseJson<SessionResponse>(session);
-      throw new Error(body?.error || "Session failed");
+      throw new Error(
+        await userMessageFromResponse(session, USER_ERRORS.sessionFailed),
+      );
     }
   };
 
   const navigateAfterLogin = async () => {
-    const response = await fetch("/api/profile/diet", { cache: "no-store" });
-    const data = await parseJson<DietProfileResponse>(response);
+    try {
+      const response = await fetch("/api/profile/diet", { cache: "no-store" });
+      const data = await parseJson<DietProfileResponse>(response);
 
-    if (response.ok && data?.onboardingRequired) {
-      router.push("/recipes?setup=diet");
-      return;
+      if (response.ok && data?.onboardingRequired) {
+        router.push("/recipes?setup=diet");
+        return;
+      }
+    } catch {
+      // Still land the user in the app if post-login routing fails.
     }
 
     router.push("/");
@@ -137,7 +147,13 @@ export default function LoginPage() {
   const handleEmailLogin = async () => {
     const parsed = loginInputSchema.safeParse({ identifier, password });
     if (!parsed.success) {
-      showPopup("error", getFirstZodError(parsed.error));
+      showPopup(
+        "error",
+        toUserMessage(
+          getFirstZodError(parsed.error),
+          USER_ERRORS.invalidPayload,
+        ),
+      );
       return;
     }
 
@@ -149,18 +165,27 @@ export default function LoginPage() {
         const user = await loginWithEmail(id.trim().toLowerCase(), pwd);
         await startSession(await user.getIdToken());
       } else {
-        const response = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(parsed.data),
-        });
-        const body = await parseJson<SessionResponse>(response);
+        let response: Response;
+        try {
+          response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(parsed.data),
+          });
+        } catch {
+          throw new Error(USER_ERRORS.network);
+        }
         if (!response.ok) {
-          throw new Error(body?.error || "Invalid credentials");
+          throw new Error(
+            await userMessageFromResponse(
+              response,
+              USER_ERRORS.invalidCredentials,
+            ),
+          );
         }
       }
 
-      showPopup("success", "Login successful. Redirecting...");
+      showPopup("success", "You're in — taking you to your dashboard…");
       setTimeout(() => {
         void navigateAfterLogin();
       }, 900);
@@ -176,7 +201,7 @@ export default function LoginPage() {
     try {
       const user = await loginWithGoogle();
       await startSession(await user.getIdToken());
-      showPopup("success", "Login successful. Redirecting...");
+      showPopup("success", "You're in — taking you to your dashboard…");
       setTimeout(() => {
         void navigateAfterLogin();
       }, 900);
@@ -190,7 +215,13 @@ export default function LoginPage() {
   const handleResetPassword = async () => {
     const parsed = loginInputSchema.shape.identifier.safeParse(identifier);
     if (!parsed.success) {
-      showPopup("error", getFirstZodError(parsed.error));
+      showPopup(
+        "error",
+        toUserMessage(
+          getFirstZodError(parsed.error),
+          USER_ERRORS.invalidPayload,
+        ),
+      );
       return;
     }
 
@@ -202,8 +233,8 @@ export default function LoginPage() {
         body: JSON.stringify({ identifier: parsed.data }),
       });
       showPopup("success", "If an account exists, a reset email was sent.");
-    } catch (err) {
-      showPopup("error", err instanceof Error ? err.message : "Reset failed");
+    } catch {
+      showPopup("error", USER_ERRORS.resetFailed);
     } finally {
       setBusy(false);
     }

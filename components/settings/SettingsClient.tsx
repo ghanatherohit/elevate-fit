@@ -16,6 +16,10 @@ import DisabledWithHint, {
 import SectionHeader from "@/components/shared/SectionHeader";
 import StylePicker from "@/components/settings/StylePicker";
 import { logoutClient } from "@/lib/auth/logout-client";
+import {
+  USER_ERRORS,
+  userMessageFromResponse,
+} from "@/lib/errors/user-facing";
 
 type Preference = {
   email: boolean;
@@ -123,11 +127,11 @@ export default function SettingsClient() {
 
   const subscribePush = async (): Promise<boolean> => {
     if (!pushConfigured) {
-      setStatus("Push is not configured on this app yet.");
+      setStatus(USER_ERRORS.pushUnavailable);
       return false;
     }
     if (!pushReady) {
-      setStatus("Push is not available in this browser");
+      setStatus(USER_ERRORS.pushUnsupported);
       return false;
     }
 
@@ -140,7 +144,7 @@ export default function SettingsClient() {
       ).pushManager;
 
       if (!pushManager) {
-        setStatus("Push is not available in this browser");
+        setStatus(USER_ERRORS.pushUnsupported);
         return false;
       }
 
@@ -163,10 +167,10 @@ export default function SettingsClient() {
       return true;
     } catch (error) {
       if (error instanceof DOMException && error.name === "InvalidAccessError") {
-        setStatus("Invalid push key. Update VAPID public key and retry.");
+        setStatus(USER_ERRORS.pushUnavailable);
         return false;
       }
-      setStatus("Could not enable push notifications");
+      setStatus(USER_ERRORS.pushUnavailable);
       return false;
     }
   };
@@ -257,11 +261,10 @@ export default function SettingsClient() {
     const response = await fetch(`/api/notifications/test?mode=${mode}`, {
       method: "POST",
     });
-    const data = (await response.json().catch(() => null)) as {
-      error?: string;
-    } | null;
     setStatus(
-      response.ok ? "Test notification sent" : data?.error || "Test failed",
+      response.ok
+        ? "Test notification sent"
+        : await userMessageFromResponse(response, USER_ERRORS.testFailed),
     );
   };
 
@@ -371,12 +374,11 @@ export default function SettingsClient() {
                         },
                         {
                           ok: pushReady,
-                          reason: "Push is not supported in this browser",
+                          reason: USER_ERRORS.pushUnsupported,
                         },
                         {
                           ok: pushConfigured,
-                          reason:
-                            "Push is not configured on this app (missing VAPID key)",
+                          reason: USER_ERRORS.pushUnavailable,
                         },
                       ]);
                       const testBlockReasons = getBlockReasons([

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { User } from "@/lib/models/User";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 import { normalizeUsername } from "@/lib/validation/username";
 import { authResolveSchema, getFirstZodError } from "@/lib/validation/schemas";
 import { allowRequest, clientIp } from "@/lib/security/rate-limit";
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     });
     if (!allowed) {
       return NextResponse.json(
-        { error: "Too many attempts. Try again shortly." },
+        { error: USER_ERRORS.rateLimit },
         { status: 429 },
       );
     }

@@ -18,6 +18,11 @@ import {
 import { firebaseAuth } from "@/lib/auth/firebase-client";
 import { deleteUser, signOut } from "firebase/auth";
 import {
+  toUserMessage,
+  userMessageFromResponse,
+  USER_ERRORS,
+} from "@/lib/errors/user-facing";
+import {
   getPasswordRequirementHint,
   getPasswordStrength,
   isPasswordAcceptable,
@@ -128,10 +133,12 @@ export default function RegisterPage() {
           if (!response.ok) {
             setUsernameCheck({
               status: response.status === 429 ? "idle" : "unavailable",
-              message:
+              message: toUserMessage(
+                data?.error || data?.message,
                 response.status === 429
-                  ? "Too many checks — wait a moment and try again."
-                  : data?.error || "Could not check username.",
+                  ? USER_ERRORS.rateLimit
+                  : USER_ERRORS.usernameCheckFailed,
+              ),
             });
             return;
           }
@@ -146,7 +153,10 @@ export default function RegisterPage() {
 
           setUsernameCheck({
             status: "unavailable",
-            message: data?.message || "That username is already taken.",
+            message: toUserMessage(
+              data?.message,
+              USER_ERRORS.usernameInUse,
+            ),
           });
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") {
@@ -154,7 +164,7 @@ export default function RegisterPage() {
           }
           setUsernameCheck({
             status: "unavailable",
-            message: "Could not check username.",
+            message: USER_ERRORS.usernameCheckFailed,
           });
         }
       })();
@@ -182,10 +192,12 @@ export default function RegisterPage() {
     }>(availability);
 
     if (!availability.ok) {
-      const message =
+      const message = toUserMessage(
+        availabilityData?.message,
         availability.status === 429
-          ? "Too many checks — wait a moment and try again."
-          : availabilityData?.message || "Could not check username.";
+          ? USER_ERRORS.rateLimit
+          : USER_ERRORS.usernameCheckFailed,
+      );
       setUsernameCheck({
         status: availability.status === 429 ? "idle" : "unavailable",
         message,
@@ -194,13 +206,15 @@ export default function RegisterPage() {
     }
 
     if (!availabilityData?.available) {
+      const message = toUserMessage(
+        availabilityData?.message,
+        USER_ERRORS.usernameInUse,
+      );
       setUsernameCheck({
         status: "unavailable",
-        message: availabilityData?.message || "That username is already taken.",
+        message,
       });
-      throw new Error(
-        availabilityData?.message || "That username is already taken.",
-      );
+      throw new Error(message);
     }
 
     setUsernameCheck({
@@ -211,30 +225,40 @@ export default function RegisterPage() {
   };
 
   const finishRegistration = async (idToken: string, normalized: string) => {
-    const session = await fetch("/api/auth/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken, username: normalized }),
-    });
+    let session: Response;
+    try {
+      session = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, username: normalized }),
+      });
+    } catch {
+      throw new Error(USER_ERRORS.network);
+    }
 
     if (!session.ok) {
-      const body = await safeJson<{ error?: string }>(session);
-      const error = new Error(body?.error || "Session failed") as Error & {
-        status?: number;
-      };
+      const message = await userMessageFromResponse(
+        session,
+        USER_ERRORS.registerFailed,
+      );
+      const error = new Error(message) as Error & { status?: number };
       error.status = session.status;
       throw error;
     }
 
-    const dietResponse = await fetch("/api/profile/diet", {
-      cache: "no-store",
-    });
-    const dietData = await safeJson<{ onboardingRequired?: boolean }>(
-      dietResponse,
-    );
-    if (dietResponse.ok && dietData?.onboardingRequired) {
-      router.push("/recipes?setup=diet");
-      return;
+    try {
+      const dietResponse = await fetch("/api/profile/diet", {
+        cache: "no-store",
+      });
+      const dietData = await safeJson<{ onboardingRequired?: boolean }>(
+        dietResponse,
+      );
+      if (dietResponse.ok && dietData?.onboardingRequired) {
+        router.push("/recipes?setup=diet");
+        return;
+      }
+    } catch {
+      // Still land the user in the app if post-register routing fails.
     }
 
     router.push("/");
@@ -256,7 +280,12 @@ export default function RegisterPage() {
         username,
       });
       if (!parsed.success) {
-        throw new Error(getFirstZodError(parsed.error));
+        throw new Error(
+          toUserMessage(
+            getFirstZodError(parsed.error),
+            USER_ERRORS.invalidPayload,
+          ),
+        );
       }
 
       const {
@@ -317,7 +346,13 @@ export default function RegisterPage() {
         throw sessionErr;
       }
     } catch (err) {
-      setToast({ type: "error", message: formatFirebaseAuthError(err) });
+      setToast({
+        type: "error",
+        message: toUserMessage(
+          formatFirebaseAuthError(err),
+          USER_ERRORS.registerFailed,
+        ),
+      });
     } finally {
       setLoading(false);
     }
@@ -364,7 +399,13 @@ export default function RegisterPage() {
         throw sessionErr;
       }
     } catch (err) {
-      setToast({ type: "error", message: formatFirebaseAuthError(err) });
+      setToast({
+        type: "error",
+        message: toUserMessage(
+          formatFirebaseAuthError(err),
+          USER_ERRORS.registerFailed,
+        ),
+      });
     } finally {
       setLoading(false);
     }

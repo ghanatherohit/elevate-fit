@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import {
+  apiError,
+  apiNotFound,
+  apiUnauthorized,
+  apiUnavailable,
+} from "@/lib/api/response";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 import { requireSession } from "@/lib/auth/session";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { calculateDietTargets } from "@/lib/diet/planner";
@@ -8,14 +15,11 @@ import {
   getFirstZodError,
 } from "@/lib/validation/schemas";
 
-const unauthorized = () =>
-  NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
 export async function GET() {
   try {
     const session = await requireSession();
     if (!session) {
-      return unauthorized();
+      return apiUnauthorized();
     }
 
     await connectToDatabase();
@@ -24,7 +28,7 @@ export async function GET() {
     );
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return apiNotFound(USER_ERRORS.userNotFound);
     }
 
     const hasDietProfile = Boolean(user.dietProfile && user.dietTargets);
@@ -35,14 +39,7 @@ export async function GET() {
       onboardingRequired: !hasDietProfile,
     });
   } catch (error) {
-    console.error("[profile/diet GET]", error);
-    return NextResponse.json(
-      {
-        error:
-          "Diet profile service is temporarily unavailable. Please try again shortly.",
-      },
-      { status: 503 },
-    );
+    return apiUnavailable("[profile/diet GET]", error);
   }
 }
 
@@ -50,17 +47,14 @@ export async function PUT(request: Request) {
   try {
     const session = await requireSession();
     if (!session) {
-      return unauthorized();
+      return apiUnauthorized();
     }
 
     let body: unknown;
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json(
-        { error: "Invalid JSON payload" },
-        { status: 400 },
-      );
+      return apiError(USER_ERRORS.invalidPayload, 400);
     }
 
     const payload = dietProfileSchema.safeParse(body);
@@ -86,7 +80,7 @@ export async function PUT(request: Request) {
     ).select("dietProfile dietTargets dietProfileCompletedAt");
 
     if (!updatedUser) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return apiNotFound(USER_ERRORS.userNotFound);
     }
 
     return NextResponse.json({
@@ -96,13 +90,6 @@ export async function PUT(request: Request) {
       onboardingRequired: false,
     });
   } catch (error) {
-    console.error("[profile/diet PUT]", error);
-    return NextResponse.json(
-      {
-        error:
-          "Diet profile service is temporarily unavailable. Please try again shortly.",
-      },
-      { status: 503 },
-    );
+    return apiUnavailable("[profile/diet PUT]", error);
   }
 }

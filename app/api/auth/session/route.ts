@@ -1,13 +1,24 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { adminAuth } from "@/lib/auth/firebase-admin";
+import { authFailureResponse } from "@/lib/auth/auth-errors";
+import { getMongoDuplicateKey } from "@/lib/auth/mongo-errors";
+import { attachSessionCookie } from "@/lib/auth/session-cookie";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { User } from "@/lib/models/User";
-import { signSession } from "@/lib/auth/jwt";
-import { SESSION_MAX_AGE_SECONDS } from "@/lib/auth/session";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 import { getFirstZodError, sessionRequestSchema } from "@/lib/validation/schemas";
 import { normalizeUsername } from "@/lib/validation/username";
 import { allowRequest, clientIp } from "@/lib/security/rate-limit";
+
+export const dynamic = "force-dynamic";
+
+function normalizeEmail(email: unknown) {
+  if (typeof email !== "string") {
+    return undefined;
+  }
+  const trimmed = email.trim().toLowerCase();
+  return trimmed.length ? trimmed : undefined;
+}
 
 export async function POST(request: Request) {
   try {
@@ -19,7 +30,7 @@ export async function POST(request: Request) {
     });
     if (!allowed) {
       return NextResponse.json(
-        { error: "Too many attempts. Try again shortly." },
+        { error: USER_ERRORS.rateLimit },
         { status: 429 },
       );
     }
@@ -35,7 +46,16 @@ export async function POST(request: Request) {
     const { idToken, username } = payload.data;
 
     const decoded = await adminAuth.verifyIdToken(idToken);
-    const { uid, email, name, picture } = decoded;
+    const uid = decoded.uid;
+    const email = normalizeEmail(decoded.email);
+    const name =
+      typeof decoded.name === "string" && decoded.name.trim()
+        ? decoded.name.trim()
+        : undefined;
+    const picture =
+      typeof decoded.picture === "string" && decoded.picture.trim()
+        ? decoded.picture.trim()
+        : undefined;
 
     await connectToDatabase();
 
@@ -58,7 +78,23 @@ export async function POST(request: Request) {
       });
       if (taken) {
         return NextResponse.json(
-          { error: "Username already in use" },
+          { error: USER_ERRORS.usernameInUse },
+          { status: 409 },
+        );
+      }
+    }
+
+    // Pre-check email uniqueness so Google login gets a clear 409, not a 500.
+    if (email) {
+      const emailOwner = await User.findOne({
+        email,
+        uid: { $ne: uid },
+      })
+        .select("uid username")
+        .lean();
+      if (emailOwner) {
+        return NextResponse.json(
+          { error: USER_ERRORS.emailConflict },
           { status: 409 },
         );
       }
@@ -71,8 +107,8 @@ export async function POST(request: Request) {
         {
           $set: {
             uid,
-            email,
-            name,
+            ...(email ? { email } : {}),
+            ...(name ? { name } : {}),
             // Only overwrite when Google/Firebase actually sent a picture claim.
             ...(picture ? { photoURL: picture } : {}),
             ...(shouldSetUsername ? { username: normalizedUsername } : {}),
@@ -82,22 +118,14 @@ export async function POST(request: Request) {
         { new: true, upsert: true, setDefaultsOnInsert: true },
       );
     } catch (error) {
-      // Race: unique username index can still throw if two signups collide.
-      const code =
-        error && typeof error === "object" && "code" in error
-          ? (error as { code?: number }).code
-          : undefined;
-      if (code === 11000) {
-        const keyPattern =
-          error && typeof error === "object" && "keyPattern" in error
-            ? (error as { keyPattern?: Record<string, unknown> }).keyPattern
-            : undefined;
-        const emailConflict = Boolean(keyPattern && "email" in keyPattern);
+      const duplicate = getMongoDuplicateKey(error);
+      if (duplicate) {
+        const emailConflict = duplicate.fields.includes("email");
         return NextResponse.json(
           {
             error: emailConflict
-              ? "That email is already registered."
-              : "Username already in use",
+              ? USER_ERRORS.emailInUse
+              : USER_ERRORS.usernameInUse,
           },
           { status: 409 },
         );
@@ -105,27 +133,14 @@ export async function POST(request: Request) {
       throw error;
     }
 
-    const token = signSession({
-      uid: user.uid,
-      username: user.username,
-      email: user.email,
-      name: user.name,
-      photoURL: user.photoURL,
-      sessionVersion: user.sessionVersion ?? 1,
-    });
+    if (!user) {
+      throw new Error("Unable to create user session");
+    }
 
-    const cookieStore = await cookies();
-    cookieStore.set("ef_session", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: SESSION_MAX_AGE_SECONDS,
-    });
-
-    return NextResponse.json({ user });
+    const publicUser = await attachSessionCookie(user);
+    return NextResponse.json({ user: publicUser });
   } catch (error) {
     console.error("[auth/session]", error);
-    return NextResponse.json({ error: "Session failed" }, { status: 500 });
+    return authFailureResponse(error, { fallback: USER_ERRORS.sessionFailed });
   }
 }

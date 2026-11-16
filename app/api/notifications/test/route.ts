@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import {
+  apiError,
+  apiNotFound,
+  apiUnauthorized,
+  apiUnavailable,
+} from "@/lib/api/response";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { requireSession } from "@/lib/auth/session";
 import { User } from "@/lib/models/User";
@@ -14,31 +21,30 @@ export async function POST(request: Request) {
   const wantsPush = mode === "push" || mode === "both";
 
   if (!wantsEmail && !wantsPush) {
-    return NextResponse.json({ error: "Invalid test mode" }, { status: 400 });
+    return apiError(USER_ERRORS.invalidPayload, 400);
   }
   const session = await requireSession();
   if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  await connectToDatabase();
-
-  const [user, preference, subscriptions] = await Promise.all([
-    User.findOne({ uid: session.uid }),
-    NotificationPreference.findOne({ uid: session.uid }),
-    NotificationSubscription.find({ uid: session.uid }),
-  ]);
-
-  const now = Date.now();
-  const lastTest = preference?.lastTestAt?.getTime() ?? 0;
-  if (now - lastTest < 60 * 1000) {
-    return NextResponse.json(
-      { error: "Test limited to once per minute" },
-      { status: 429 },
-    );
+    return apiUnauthorized();
   }
 
   try {
+    await connectToDatabase();
+
+    const [user, preference, subscriptions] = await Promise.all([
+      User.findOne({ uid: session.uid }),
+      NotificationPreference.findOne({ uid: session.uid }),
+      NotificationSubscription.find({ uid: session.uid }),
+    ]);
+
+    const now = Date.now();
+    const lastTest = preference?.lastTestAt?.getTime() ?? 0;
+    if (now - lastTest < 60 * 1000) {
+      return NextResponse.json(
+        { error: USER_ERRORS.rateLimit },
+        { status: 429 },
+      );
+    }
     // Respect saved channel prefs (email defaults on when unset).
     const emailEnabled = preference?.email !== false;
     const pushEnabled = preference?.push === true;
@@ -46,23 +52,23 @@ export async function POST(request: Request) {
     const deliverPush = wantsPush && pushEnabled;
 
     if (!deliverEmail && !deliverPush) {
-      return NextResponse.json(
-        { error: "No enabled notification channels for this test" },
-        { status: 400 },
+      return apiError(
+        "Turn on email or push notifications before sending a test.",
+        400,
       );
     }
 
     if (deliverEmail && !user?.email) {
-      return NextResponse.json(
-        { error: "No email found for this account" },
-        { status: 400 },
+      return apiError(
+        "Add an email to your account to receive email notifications.",
+        400,
       );
     }
 
     if (deliverPush && !subscriptions.length) {
-      return NextResponse.json(
-        { error: "No push subscription found" },
-        { status: 400 },
+      return apiError(
+        "Enable push on this device before sending a push test.",
+        400,
       );
     }
 
@@ -99,10 +105,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("[notifications/test]", error);
-    return NextResponse.json(
-      { error: "Delivery failed. Try again shortly." },
-      { status: 500 },
-    );
+    return apiUnavailable("[notifications/test]", error, USER_ERRORS.testFailed);
   }
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiUnauthorized, withApiHandler } from "@/lib/api/response";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { Reminder } from "@/lib/models/Reminder";
 import { NotificationPreference } from "@/lib/models/NotificationPreference";
@@ -40,9 +41,10 @@ function scheduledAtIst(now: Date, hours: number, minutes: number) {
 
 export async function GET(request: Request) {
   if (!authorizeCron(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return apiUnauthorized();
   }
 
+  return withApiHandler("[cron/reminders]", async () => {
   await connectToDatabase();
 
   const now = new Date();
@@ -164,4 +166,5 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({ processed: due.length });
+  });
 }

@@ -11,6 +11,11 @@ import DisabledWithHint, {
 } from "@/components/shared/FormBlockHint";
 import SectionHeader from "@/components/shared/SectionHeader";
 import { firebaseAuth } from "@/lib/auth/firebase-client";
+import {
+  toUserMessage,
+  USER_ERRORS,
+  userMessageFromResponse,
+} from "@/lib/errors/user-facing";
 import { getFirstZodError, profileUpdateSchema } from "@/lib/validation/schemas";
 
 type SessionUser = {
@@ -92,7 +97,7 @@ export default function ProfileClient() {
         setName(data.user.name ?? "");
         setPhotoURL(data.user.photoURL ?? "");
       } catch {
-        setToast({ type: "error", message: "Could not load profile" });
+        setToast({ type: "error", message: USER_ERRORS.loadFailed });
       } finally {
         setLoaded(true);
       }
@@ -140,7 +145,13 @@ export default function ProfileClient() {
       photoURL,
     });
     if (!parsed.success) {
-      setToast({ type: "error", message: getFirstZodError(parsed.error) });
+      setToast({
+        type: "error",
+        message: toUserMessage(
+          getFirstZodError(parsed.error),
+          USER_ERRORS.invalidPayload,
+        ),
+      });
       return;
     }
 
@@ -163,8 +174,13 @@ export default function ProfileClient() {
       }
 
       if (!response.ok) {
-        const body = (await response.json()) as { error?: string };
-        setToast({ type: "error", message: body.error || "Update failed" });
+        setToast({
+          type: "error",
+          message: await userMessageFromResponse(
+            response,
+            USER_ERRORS.saveFailed,
+          ),
+        });
         return;
       }
 
@@ -175,7 +191,7 @@ export default function ProfileClient() {
       setPhotoURL(body.user.photoURL ?? "");
       setToast({ type: "success", message: "Saved" });
     } catch {
-      setToast({ type: "error", message: "Update failed" });
+      setToast({ type: "error", message: USER_ERRORS.saveFailed });
     } finally {
       setSaving(false);
     }
