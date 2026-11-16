@@ -1,5 +1,4 @@
 import {
-  applicationDefault,
   cert,
   getApps,
   initializeApp,
@@ -13,7 +12,13 @@ function normalizePrivateKey(key: string) {
   return key.replace(/\\n/g, "\n");
 }
 
-const parseServiceAccount = () => {
+export type ParsedServiceAccount = {
+  projectId?: string;
+  clientEmail: string;
+  privateKey: string;
+};
+
+export function parseServiceAccount(): ParsedServiceAccount | null {
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     try {
       const parsed = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT) as {
@@ -36,8 +41,7 @@ const parseServiceAccount = () => {
 
   const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
   const privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
-  const adminProjectId =
-    process.env.FIREBASE_ADMIN_PROJECT_ID || projectId;
+  const adminProjectId = process.env.FIREBASE_ADMIN_PROJECT_ID || projectId;
 
   if (clientEmail && privateKey) {
     return {
@@ -48,7 +52,12 @@ const parseServiceAccount = () => {
   }
 
   return null;
-};
+}
+
+/** True when Admin credentials are present and parseable. */
+export function hasFirebaseAdminCredentials() {
+  return Boolean(parseServiceAccount());
+}
 
 let cachedApp: App | null = null;
 let cachedAuth: Auth | null = null;
@@ -77,18 +86,15 @@ function initAdminApp(): App {
     );
   }
 
-  try {
-    return initializeApp({
-      credential: applicationDefault(),
-      projectId,
-    });
-  } catch (error) {
+  if (!projectId) {
     throw new Error(
-      `Firebase Admin is not configured. Add FIREBASE_SERVICE_ACCOUNT to .env.local. ${
-        error instanceof Error ? error.message : ""
-      }`,
+      "Firebase Admin is not configured. Add FIREBASE_SERVICE_ACCOUNT to .env.local (or set NEXT_PUBLIC_FIREBASE_PROJECT_ID for local token verify).",
     );
   }
+
+  // Local-only: ID token verification uses Google public certs + projectId.
+  // Production always requires a real service account (above).
+  return initializeApp({ projectId });
 }
 
 /** Lazy init so missing credentials don't crash unrelated imports at boot. */

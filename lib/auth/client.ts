@@ -8,6 +8,7 @@ import {
   type AuthError,
 } from "firebase/auth";
 import { firebaseAuth } from "./firebase-client";
+import { toUserMessage, USER_ERRORS } from "@/lib/errors/user-facing";
 
 export function formatFirebaseAuthError(err: unknown): string {
   const code =
@@ -21,25 +22,24 @@ export function formatFirebaseAuthError(err: unknown): string {
   switch (code) {
     case "auth/popup-closed-by-user":
     case "auth/cancelled-popup-request":
-      return "Sign-in popup was closed. Try again.";
+      return USER_ERRORS.popupClosed;
     case "auth/popup-blocked":
-      return "Popup was blocked by the browser. Allow popups for this site.";
+      return USER_ERRORS.popupBlocked;
     case "auth/internal-error":
-      return "Firebase Auth failed (internal). Check authorized domains include localhost, and that Email/Google providers are enabled.";
     case "auth/invalid-api-key":
-      return "Invalid Firebase API key in .env.local.";
+      return USER_ERRORS.unavailable;
     case "auth/network-request-failed":
-      return "Network error talking to Firebase. Check your connection.";
+      return USER_ERRORS.network;
     case "auth/user-not-found":
     case "auth/wrong-password":
     case "auth/invalid-credential":
-      return "Invalid credentials";
+      return USER_ERRORS.invalidCredentials;
     case "auth/email-already-in-use":
-      return "That email is already registered.";
+      return USER_ERRORS.emailInUse;
     case "auth/weak-password":
-      return "Password is too weak.";
+      return USER_ERRORS.weakPassword;
     default:
-      return err instanceof Error ? err.message : "Authentication failed";
+      return toUserMessage(err, USER_ERRORS.signInFailed);
   }
 }
 

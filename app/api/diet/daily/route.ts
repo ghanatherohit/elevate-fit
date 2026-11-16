@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import {
+  apiError,
+  apiNotFound,
+  apiUnauthorized,
+  apiUnavailable,
+} from "@/lib/api/response";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 import { requireSession } from "@/lib/auth/session";
 import { buildDailyDietPlan } from "@/lib/diet/planner";
 import { connectToDatabase } from "@/lib/db/mongoose";
@@ -9,7 +16,7 @@ export async function GET() {
   try {
     const session = await requireSession();
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiUnauthorized();
     }
 
     await connectToDatabase();
@@ -18,12 +25,15 @@ export async function GET() {
       "dietTargets dietProfile",
     );
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return apiNotFound(USER_ERRORS.userNotFound);
     }
 
     if (!user.dietTargets || !user.dietProfile) {
       return NextResponse.json(
-        { error: "Diet profile not configured", onboardingRequired: true },
+        {
+          error: USER_ERRORS.dietNotConfigured,
+          onboardingRequired: true,
+        },
         { status: 400 },
       );
     }
@@ -62,13 +72,6 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("[diet/daily]", error);
-    return NextResponse.json(
-      {
-        error:
-          "Diet service is temporarily unavailable. Please try again shortly.",
-      },
-      { status: 503 },
-    );
+    return apiUnavailable("[diet/daily]", error);
   }
 }

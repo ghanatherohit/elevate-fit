@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { verifySessionEdge } from "@/lib/auth/edge-session";
+import { USER_ERRORS } from "@/lib/errors/user-facing";
 
 const allowedOrigins = [
   "https://elevate-fit.vercel.app",
@@ -79,7 +80,7 @@ export async function proxy(request: NextRequest) {
         : null;
       if (!session) {
         const unauthorized = NextResponse.json(
-          { error: "Unauthorized" },
+          { error: USER_ERRORS.unauthorized },
           { status: 401 },
         );
         return applyCors(unauthorized, origin, isAllowedOrigin);
